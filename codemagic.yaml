@@ -43,19 +43,25 @@ workflows:
           fi
           echo "模擬器 UDID=$DEVICE"
           xcrun simctl boot "$DEVICE" || true
-          sleep 6
+          # 等模擬器完全開機（不只 boot 指令回傳）
+          xcrun simctl bootstatus "$DEVICE" -b || sleep 10
           APP=$(find build -name "RaybanCOO.app" -type d | head -1)
           echo "APP=$APP"
           xcrun simctl install "$DEVICE" "$APP"
-          mkdir -p shots
+          # 用絕對路徑，避免 simctl io 解析相對路徑時找不到資料夾（NSCocoaError code 4）
+          SHOTS="${CM_BUILD_DIR:-$PWD}/shots"
+          mkdir -p "$SHOTS"
+          echo "SHOTS=$SHOTS"
           i=1
           for TAB in youtube maps telegram; do
             xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" 2>/dev/null || true
             xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -startTab "$TAB"
-            sleep 9
-            xcrun simctl io "$DEVICE" screenshot "shots/0${i}_${TAB}.png"
+            sleep 10
+            xcrun simctl io "$DEVICE" screenshot --type=png "$SHOTS/0${i}_${TAB}.png"
+            echo "已截：0${i}_${TAB}.png"
             i=$((i+1))
           done
-          echo "截圖完成："; ls -la shots
+          echo "截圖完成："; ls -la "$SHOTS"
     artifacts:
       - shots/*.png
+      - $CM_BUILD_DIR/shots/*.png
