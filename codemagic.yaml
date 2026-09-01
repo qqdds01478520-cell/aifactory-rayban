@@ -1,14 +1,16 @@
-# Codemagic CI — 雲端編譯（免本機 Mac，免費 500 分鐘/月）。
-# 放 repo 根，不需 GitHub workflow scope。在 codemagic.io 用公司 GitHub 帳號連此 repo。
-# 第一階段：編譯綠燈（未簽署，驗程式碼＋MWDAT SDK 整合）。
-# 帳號啟用後加 signing + OTA 匯出。
+# Codemagic CI — 雲端編譯 + iPhone 模擬器逐頁截圖（免本機 Mac、免 Apple 付費簽署）。
+# 放 repo 根，不需 GitHub workflow scope。在 codemagic.io 用「自訂來源」貼公開 repo 網址即可連，
+# 免 GitHub 帳號授權（repo 是公開的）。真 relay 金鑰在 Codemagic 環境變數 RELAY_AUTH_KEY(secret) 設，不進 repo。
 workflows:
-  ios-compile:
-    name: iOS Compile (unsigned)
+  ios-screenshots:
+    name: iOS 編譯＋逐頁截圖
     instance_type: mac_mini_m2
     max_build_duration: 30
     environment:
       xcode: latest
+      vars:
+        BUNDLE_ID: "com.aifactory.rayban.RaybanCOO"
+      # RELAY_AUTH_KEY 在 Codemagic UI 設為 secret；沒設就空字串，UI 照樣截得到圖（顯示空狀態）。
     triggering:
       events:
         - push
@@ -19,12 +21,41 @@ workflows:
         script: brew install xcodegen
       - name: 生成 Xcode 專案
         script: xcodegen generate
-      - name: 編譯（未簽署）
+      - name: 編譯（模擬器，未簽署）
         script: |
+          set -e
           xcodebuild \
             -project RaybanCOO.xcodeproj \
             -scheme RaybanCOO \
-            -destination 'generic/platform=iOS' \
+            -sdk iphonesimulator \
             -configuration Debug \
+            -derivedDataPath build \
+            RELAY_AUTH_KEY="${RELAY_AUTH_KEY:-}" \
             CODE_SIGNING_ALLOWED=NO \
             build
+      - name: 開模擬器＋逐頁截圖
+        script: |
+          set -e
+          # 找一台可用的 iPhone 模擬器（Codemagic mac 預裝）
+          DEVICE=$(xcrun simctl list devices available | grep -m1 -oE 'iPhone 1[5-9][^(]*\(([0-9A-F-]{36})\)' | grep -oE '[0-9A-F-]{36}')
+          if [ -z "$DEVICE" ]; then
+            DEVICE=$(xcrun simctl list devices available | grep -m1 -oE '\(([0-9A-F-]{36})\)' | tr -d '()')
+          fi
+          echo "模擬器 UDID=$DEVICE"
+          xcrun simctl boot "$DEVICE" || true
+          sleep 6
+          APP=$(find build -name "RaybanCOO.app" -type d | head -1)
+          echo "APP=$APP"
+          xcrun simctl install "$DEVICE" "$APP"
+          mkdir -p shots
+          i=1
+          for TAB in youtube maps telegram; do
+            xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" 2>/dev/null || true
+            xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -startTab "$TAB"
+            sleep 9
+            xcrun simctl io "$DEVICE" screenshot "shots/0${i}_${TAB}.png"
+            i=$((i+1))
+          done
+          echo "截圖完成："; ls -la shots
+    artifacts:
+      - shots/*.png

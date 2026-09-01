@@ -4,7 +4,14 @@ import SwiftUI
 /// 頂部品牌列＋即時時鐘，中間功能頁，底部色彩編碼分頁列。
 struct ContentView: View {
     @Environment(\.colorScheme) private var scheme
-    @State private var tab: AppTab = .youtube
+    // 預設 YouTube；CI 截圖時用 launch argument -startTab <youtube|maps|telegram> 指定初始頁，
+    // 讓雲端模擬器對每個功能各截一張實際畫面。
+    @State private var tab: AppTab = {
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-startTab"), i + 1 < args.count,
+           let t = AppTab(rawValue: args[i + 1]) { return t }
+        return .youtube
+    }()
     @State private var now = Date()
     private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
