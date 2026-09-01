@@ -1,0 +1,40 @@
+# XcodeGen 規格 — CI 上用 `xcodegen generate` 生出 .xcodeproj（免本機 Mac 手建專案）。
+name: RaybanCOO
+options:
+  bundleIdPrefix: com.aifactory.rayban
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  MWDAT:
+    url: https://github.com/facebook/meta-wearables-dat-ios
+    from: 0.1.0
+targets:
+  RaybanCOO:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: 克拉扣
+        UILaunchScreen: {}
+        NSCameraUsageDescription: 用眼鏡相機拍照辨識
+        NSMicrophoneUsageDescription: 用來聽你講話做語音問答
+        NSSpeechRecognitionUsageDescription: 把你的話轉成文字問克拉扣
+        NSBluetoothAlwaysUsageDescription: 連線眼鏡與藍牙音訊
+        CFBundleURLTypes:
+          - CFBundleURLSchemes: [raybancoo]
+    dependencies:
+      - package: MWDAT
+        product: MWDATCore
+      - package: MWDAT
+        product: MWDATCamera
+      - package: MWDAT
+        product: MWDATDisplay
+    settings:
+      base:
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"

@@ -1,0 +1,30 @@
+# Codemagic CI — 雲端編譯（免本機 Mac，免費 500 分鐘/月）。
+# 放 repo 根，不需 GitHub workflow scope。在 codemagic.io 用公司 GitHub 帳號連此 repo。
+# 第一階段：編譯綠燈（未簽署，驗程式碼＋MWDAT SDK 整合）。
+# 帳號啟用後加 signing + OTA 匯出。
+workflows:
+  ios-compile:
+    name: iOS Compile (unsigned)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+    scripts:
+      - name: 安裝 XcodeGen
+        script: brew install xcodegen
+      - name: 生成 Xcode 專案
+        script: xcodegen generate
+      - name: 編譯（未簽署）
+        script: |
+          xcodebuild \
+            -project RaybanCOO.xcodeproj \
+            -scheme RaybanCOO \
+            -destination 'generic/platform=iOS' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build

@@ -1,0 +1,31 @@
+# 雲端編譯（免本機 Mac）：GitHub Actions macOS runner。
+# 先跑「編譯綠燈」——生成 xcodeproj、解析 MWDAT 套件、編譯未簽署 build。
+# 帳號啟用後再加簽署 + OTA 匯出（另 job）。
+name: iOS Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  compile:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安裝 XcodeGen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 專案
+        run: xcodegen generate
+
+      - name: 編譯（未簽署，先驗程式碼＋SDK 整合）
+        run: |
+          xcodebuild \
+            -project RaybanCOO.xcodeproj \
+            -scheme RaybanCOO \
+            -destination 'generic/platform=iOS' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build
