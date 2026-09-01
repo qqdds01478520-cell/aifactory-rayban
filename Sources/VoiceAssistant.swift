@@ -1,3 +1,6 @@
+// 第二批「隨時中文語音對話」用（會把答案上鏡，依賴 GlassesManager）。
+// 第一批純手機 UI 不編譯它——搜尋列的語音輸入已由 SpeechInput.swift 提供。
+#if canImport(MWDATCore)
 import Foundation
 import AVFoundation
 import Speech
@@ -84,3 +87,4 @@ final class VoiceAssistant: ObservableObject {
         synth.speak(u)
     }
 }
+#endif

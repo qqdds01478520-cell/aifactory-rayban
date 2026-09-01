@@ -3,14 +3,18 @@ import SwiftUI
 @main
 struct RaybanCOOApp: App {
     init() {
-        GlassesManager.configure()   // Wearables.configure() 一次
+        #if canImport(MWDATCore)
+        GlassesManager.configure()   // 第二批：眼鏡 SDK 初始化
+        #endif
     }
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .onOpenURL { url in       // Meta AI app 授權回呼（必接）
+                #if canImport(MWDATCore)
+                .onOpenURL { url in       // 第二批：Meta AI app 授權回呼
                     Task { await GlassesManager.shared.handleUrl(url) }
                 }
+                #endif
         }
     }
 }

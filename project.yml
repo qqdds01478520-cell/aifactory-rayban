@@ -1,13 +1,11 @@
 # XcodeGen 規格 — CI 上用 `xcodegen generate` 生出 .xcodeproj（免本機 Mac 手建專案）。
+# 第一批：純手機 UI（YouTube／地圖／Telegram），不含 MWDAT，確保雲端模擬器編得出畫面截圖。
+# 第二批做眼鏡功能時，把下方 packages/dependencies 的 MWDAT 三段加回即可（原檔在 git 歷史）。
 name: RaybanCOO
 options:
   bundleIdPrefix: com.aifactory.rayban
   deploymentTarget:
-    iOS: "16.0"
-packages:
-  MWDAT:
-    url: https://github.com/facebook/meta-wearables-dat-ios
-    from: 0.1.0
+    iOS: "17.0"
 targets:
   RaybanCOO:
     type: application
@@ -20,21 +18,18 @@ targets:
         CFBundleDisplayName: 克拉扣
         UILaunchScreen: {}
         NSCameraUsageDescription: 用眼鏡相機拍照辨識
-        NSMicrophoneUsageDescription: 用來聽你講話做語音問答
-        NSSpeechRecognitionUsageDescription: 把你的話轉成文字問克拉扣
+        NSMicrophoneUsageDescription: 用來聽你講話做語音輸入
+        NSSpeechRecognitionUsageDescription: 把你的話轉成中文字
         NSBluetoothAlwaysUsageDescription: 連線眼鏡與藍牙音訊
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        RelayAuthKey: $(RELAY_AUTH_KEY)
         CFBundleURLTypes:
           - CFBundleURLSchemes: [raybancoo]
-    dependencies:
-      - package: MWDAT
-        product: MWDATCore
-      - package: MWDAT
-        product: MWDATCamera
-      - package: MWDAT
-        product: MWDATDisplay
     settings:
       base:
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
+        RELAY_AUTH_KEY: ""

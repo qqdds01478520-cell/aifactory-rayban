@@ -1,53 +1,98 @@
 import SwiftUI
 
-/// iPhone 端主畫面：連眼鏡、開語音、看狀態。眼鏡本身的顯示走 GlassesManager。
+/// 克拉扣 OS 手機主畫面（第一批，純 UI、不接眼鏡也能跑）：
+/// 頂部品牌列＋即時時鐘，中間功能頁，底部色彩編碼分頁列。
 struct ContentView: View {
-    @StateObject private var voice = VoiceAssistant()
-    @State private var status = "尚未連線"
-    @State private var bridge: RemoteDebugBridge?
+    @Environment(\.colorScheme) private var scheme
+    @State private var tab: AppTab = .youtube
+    @State private var now = Date()
+    private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(spacing: 20) {
-            Text("克拉扣 · 眼鏡版").font(.title.bold())
-            Text(status).font(.footnote).foregroundStyle(.secondary)
-
-            Button("連上眼鏡") { Task { await connect() } }
-                .buttonStyle(.borderedProminent)
-
-            Button(voice.listening ? "停止聆聽" : "開始講話") {
-                Task { await toggleVoice() }
+        ZStack {
+            Theme.ground(scheme).ignoresSafeArea()
+            VStack(spacing: 0) {
+                header
+                content
+                tabBar
             }
-            .buttonStyle(.bordered)
+        }
+        .onReceive(clock) { now = $0 }
+        .preferredColorScheme(.dark)
+    }
 
-            if !voice.lastQuestion.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("問：\(voice.lastQuestion)").font(.body)
-                    Text(voice.lastAnswer).font(.body).foregroundStyle(.blue)
-                }.padding()
+    // 品牌列
+    private var header: some View {
+        HStack(alignment: .center, spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(LinearGradient(colors: [Theme.brand, Theme.brand.opacity(0.7)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 34, height: 34)
+                Text("克").font(.system(size: 18, weight: .heavy, design: .rounded)).foregroundStyle(.black)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                Text("克拉扣 OS").font(Theme.display(19)).foregroundStyle(Theme.ink(scheme))
+                Text(tab.hint).font(Theme.body(11)).foregroundStyle(Theme.inkDim(scheme))
             }
             Spacer()
+            HStack(spacing: 6) {
+                Circle().fill(Theme.maps).frame(width: 7, height: 7)
+                Text(now, format: .dateTime.hour().minute())
+                    .font(Theme.title(16)).monospacedDigit()
+                    .foregroundStyle(Theme.ink(scheme))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Capsule().fill(Theme.surface(scheme)))
         }
-        .padding()
+        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12)
     }
 
-    private func connect() async {
-        do {
-            try await GlassesManager.shared.register()
-            try await GlassesManager.shared.connect()
-            status = "已連線 · " + GlassesManager.shared.statusText()
-            // 啟動遠端除錯橋：COO 可從工廠機下指令自我驗收
-            let b = RemoteDebugBridge(authKey: AppConfig.authKey,
-                                      executor: GlassesManager.shared)
-            bridge = b
-            Task { await b.start() }
-        } catch {
-            status = "連線失敗：\(error)"
+    @ViewBuilder private var content: some View {
+        switch tab {
+        case .youtube: YouTubeView()
+        case .maps: MapsView()
+        case .telegram: TelegramView()
         }
     }
 
-    private func toggleVoice() async {
-        if voice.listening { voice.stopListening(); return }
-        guard await voice.requestPermissions() else { status = "需要麥克風/語音權限"; return }
-        do { try voice.startListening() } catch { status = "收音失敗：\(error)" }
+    // 色彩編碼分頁列
+    private var tabBar: some View {
+        HStack(spacing: 0) {
+            ForEach(AppTab.allCases) { t in
+                let on = t == tab
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { tab = t }
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: t.icon)
+                            .font(.system(size: 20, weight: .semibold))
+                        Text(t.title).font(Theme.label(11))
+                    }
+                    .foregroundStyle(on ? t.accent : Theme.inkDim(scheme))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        ZStack {
+                            if on {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(t.accent.opacity(0.14))
+                            }
+                        }
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
+        .background(
+            Theme.surface(scheme)
+                .overlay(Rectangle().fill(Theme.line(scheme)).frame(height: 1), alignment: .top)
+                .ignoresSafeArea(edges: .bottom)
+        )
     }
+}
+
+#Preview {
+    ContentView()
 }

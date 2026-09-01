@@ -1,3 +1,7 @@
+// 眼鏡（Meta DAT SDK）整合——第二批「進眼鏡」時啟用。
+// 用 #if canImport 包住：第一批純手機 UI（project.yml 不含 MWDAT）時整檔不編譯，
+// 確保雲端模擬器一定編得出畫面截圖；第二批把 MWDAT 加回 project.yml 即自動啟用。
+#if canImport(MWDATCore)
 import Foundation
 import MWDATCore
 import MWDATCamera
@@ -8,7 +12,7 @@ import MWDATDisplay
 ///
 /// 能力邊界（2026-09-01 SDK 研究定案）：
 ///  - 顯示、拍照 = DAT SDK 原生支援。
-///  - 麥克風、喇叭 = SDK 無 API，另由 AudioIO.swift 走 iOS AVAudioEngine + 藍牙 HFP 路由。
+///  - 麥克風、喇叭 = SDK 無 API，另由 VoiceAssistant 走 iOS AVAudioEngine + 藍牙 HFP 路由。
 @MainActor
 final class GlassesManager: CommandExecutor {
     static let shared = GlassesManager()
@@ -17,33 +21,27 @@ final class GlassesManager: CommandExecutor {
     private var display: Display?
     private var camera: Camera?
 
-    /// 在 App init 呼叫一次。
     static func configure() {
         do { try Wearables.configure() }
         catch { NSLog("Wearables.configure 失敗: \(error)") }
     }
 
-    /// Meta AI app 授權回呼（.onOpenURL 轉進來）。
     func handleUrl(_ url: URL) async {
         _ = try? await Wearables.shared.handleUrl(url)
     }
 
-    /// 與眼鏡配對授權（首次）。
     func register() async throws {
         try await Wearables.shared.startRegistration()
     }
 
-    /// 建立並啟動 session，掛上顯示與相機 capability。
     func connect() async throws {
         let s = try Wearables.shared.createSession(
             deviceSelector: AutoDeviceSelector(wearables: Wearables.shared))
         try s.start()
         session = s
-        // 顯示
         let d = try s.addDisplay()
         d.start()
         display = d
-        // 相機（中畫質 24fps，拍照夠用）
         let cfg = StreamConfiguration(videoCodec: .hvc1, resolution: .medium, frameRate: 24)
         if let c = try s.addCamera(config: cfg) {
             c.stream.start()
@@ -58,9 +56,6 @@ final class GlassesManager: CommandExecutor {
         camera = nil; display = nil; session = nil
     }
 
-    // MARK: 顯示
-
-    /// 在鏡片顯示一段文字（標題 + 內文）。
     func showText(title: String, body: String) async throws {
         guard let display else { throw GlassesError.notConnected }
         try await display.send(
@@ -73,9 +68,6 @@ final class GlassesManager: CommandExecutor {
         )
     }
 
-    // MARK: 拍照
-
-    /// 拍一張照，回傳 JPEG data。
     func capturePhoto() async throws -> Data {
         guard let camera else { throw GlassesError.notConnected }
         return try await withCheckedThrowingContinuation { cont in
@@ -83,20 +75,14 @@ final class GlassesManager: CommandExecutor {
                 cont.resume(returning: photo.data)
             }
             camera.stream.capturePhoto(format: .jpeg)
-            _ = token // 由 SDK 生命週期管理
+            _ = token
         }
     }
 
-    // MARK: 狀態
-
     func statusText() -> String {
         let s = session?.statePublisher.value.map { "\($0)" } ?? "no-session"
-        let hasDisplay = display != nil
-        let hasCamera = camera != nil
-        return "session=\(s) display=\(hasDisplay) camera=\(hasCamera)"
+        return "session=\(s) display=\(display != nil) camera=\(camera != nil)"
     }
-
-    // MARK: CommandExecutor（遠端除錯橋）
 
     func execute(_ cmd: RemoteCommand) async -> CommandResult {
         do {
@@ -121,14 +107,4 @@ final class GlassesManager: CommandExecutor {
 }
 
 enum GlassesError: Error { case notConnected }
-
-enum AppConfig {
-    // ⚠ 真值不進公開 repo。編譯用 placeholder；真 key 由執行期注入
-    //   （首次啟動設定畫面 / 不提交的 Secrets.plist / CI build secret）。
-    static let authKey: String = {
-        if let k = Bundle.main.object(forInfoDictionaryKey: "RelayAuthKey") as? String,
-           !k.isEmpty, k != "$(RELAY_AUTH_KEY)" { return k }
-        return "SET_AT_RUNTIME"
-    }()
-    static let relayBase = "https://rayban-relay.goingtosheon.workers.dev"
-}
+#endif
