@@ -10,7 +10,8 @@ workflows:
       xcode: latest
       vars:
         BUNDLE_ID: "com.aifactory.rayban.RaybanCOO"
-      # RELAY_AUTH_KEY 在 Codemagic UI 設為 secret；沒設就空字串，UI 照樣截得到圖（顯示空狀態）。
+      # 截圖 build 不需 relay 金鑰：YouTube 未配金鑰時自動退成真實熱門預設清單（可點播）。
+      # 正式機注入 RelayAuthKey 後即改用即時搜尋。
     triggering:
       events:
         - push

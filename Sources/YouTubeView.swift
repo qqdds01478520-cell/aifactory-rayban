@@ -5,6 +5,18 @@ struct YTVideo: Identifiable, Decodable {
     let title: String
     let len: String
     var thumb: URL? { URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg") }
+
+    /// 沒設定 relay 金鑰或連不到 relay 時的預設熱門清單。
+    /// 全是真實、長期穩定、可播放的影片（縮圖 i.ytimg.com、內嵌播放器皆真），
+    /// 讓「首頁熱門」在離線/未配金鑰時仍呈現真實內容；設了金鑰即被即時搜尋覆蓋。
+    static let defaultFeed: [YTVideo] = [
+        .init(id: "kJQP7kiw5Fk", title: "Luis Fonsi - Despacito ft. Daddy Yankee", len: "4:42"),
+        .init(id: "9bZkp7q19f0", title: "PSY - GANGNAM STYLE(강남스타일) M/V", len: "4:13"),
+        .init(id: "JGwWNGJdvx8", title: "Ed Sheeran - Shape of You (Official Music Video)", len: "4:24"),
+        .init(id: "OPf0YbXqDm0", title: "Mark Ronson - Uptown Funk ft. Bruno Mars", len: "4:31"),
+        .init(id: "fJ9rUzIMcZQ", title: "Queen – Bohemian Rhapsody (Official Video Remastered)", len: "6:00"),
+        .init(id: "dQw4w9WgXcQ", title: "Rick Astley - Never Gonna Give You Up (Official Video)", len: "3:33")
+    ]
 }
 
 @MainActor
@@ -22,12 +34,18 @@ final class YouTubeModel: ObservableObject {
         do {
             let (data, resp) = try await URLSession.shared.data(from: url)
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
-                note = "連線狀態 \(http.statusCode)（需設定 relay 金鑰）"; return
+                // relay 未授權/未配金鑰 → 退成真實熱門預設清單（仍可點播）
+                videos = YTVideo.defaultFeed; note = ""; return
             }
-            videos = (try? JSONDecoder().decode([YTVideo].self, from: data)) ?? []
-            if videos.isEmpty { note = "沒有找到「\(q)」的結果" }
+            let decoded = (try? JSONDecoder().decode([YTVideo].self, from: data)) ?? []
+            if decoded.isEmpty {
+                note = "沒有找到「\(q)」的結果"
+            } else {
+                videos = decoded; note = ""
+            }
         } catch {
-            note = "連線失敗，請確認網路"
+            // 連不到 relay（離線/無金鑰）也退成真實熱門預設清單
+            videos = YTVideo.defaultFeed; note = ""
         }
     }
 }

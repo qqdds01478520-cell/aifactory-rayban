@@ -6,10 +6,17 @@ struct MapsView: View {
     @State private var query = ""
     @State private var place = "台北101"
 
-    private var mapURL: URL {
+    // Google 地圖 output=embed 必須包在 <iframe> 內才會出圖（頂層載入會回 API 錯誤）
+    private var mapHTML: String {
         let q = place.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "Taipei"
-        // Google 地圖免 API key 的嵌入方式（output=embed）
-        return URL(string: "https://maps.google.com/maps?q=\(q)&hl=zh-TW&z=15&output=embed")!
+        let src = "https://maps.google.com/maps?q=\(q)&hl=zh-TW&z=15&output=embed"
+        return """
+        <!DOCTYPE html><html><head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <style>html,body{margin:0;padding:0;height:100%;background:#0F1220;overflow:hidden}
+        iframe{border:0;width:100%;height:100%;display:block}</style></head>
+        <body><iframe src="\(src)" allowfullscreen loading="eager"></iframe></body></html>
+        """
     }
 
     var body: some View {
@@ -21,7 +28,7 @@ struct MapsView: View {
             .padding(.horizontal, 16)
 
             ZStack(alignment: .top) {
-                WebView(url: mapURL)
+                WebView(html: mapHTML)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
