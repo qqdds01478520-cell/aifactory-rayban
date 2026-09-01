@@ -62,6 +62,18 @@ workflows:
             i=$((i+1))
           done
           echo "截圖完成："; ls -la "$SHOTS"
+          # 雙保險：把三張圖上傳臨時圖床，URL 印進 log 供 COO 從 Windows 直接下載
+          # （Codemagic artifact 面板偶爾收不到，改走圖床最穩）
+          echo "===UPLOAD_START==="
+          for f in "$SHOTS"/01_youtube.png "$SHOTS"/02_maps.png "$SHOTS"/03_telegram.png; do
+            base=$(basename "$f")
+            URL=$(curl -sf -A "coo-ci" -F "file=@${f}" https://0x0.st 2>/dev/null)
+            if [ -z "$URL" ]; then
+              URL=$(curl -sf --upload-file "$f" "https://transfer.sh/${base}" 2>/dev/null)
+            fi
+            echo "UPLOADED ${base} => ${URL:-UPLOAD_FAILED}"
+          done
+          echo "===UPLOAD_END==="
     artifacts:
       - shots/*.png
       - $CM_BUILD_DIR/shots/*.png
