@@ -48,32 +48,23 @@ workflows:
           APP=$(find build -name "RaybanCOO.app" -type d | head -1)
           echo "APP=$APP"
           xcrun simctl install "$DEVICE" "$APP"
-          # 用絕對路徑，避免 simctl io 解析相對路徑時找不到資料夾（NSCocoaError code 4）
+          # 寫進 Codemagic 保證會發佈的 CM_EXPORT_DIR（該目錄內容一定被收成 artifacts）
+          # 絕對路徑避免 simctl io NSCocoaError code 4；再複製一份到 shots/ 雙保險
+          OUT="${CM_EXPORT_DIR:-${CM_BUILD_DIR:-$PWD}/export}"
           SHOTS="${CM_BUILD_DIR:-$PWD}/shots"
-          mkdir -p "$SHOTS"
-          echo "SHOTS=$SHOTS"
+          mkdir -p "$OUT" "$SHOTS"
+          echo "OUT=$OUT  SHOTS=$SHOTS"
           i=1
           for TAB in youtube maps telegram; do
             xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" 2>/dev/null || true
             xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -startTab "$TAB"
             sleep 10
-            xcrun simctl io "$DEVICE" screenshot --type=png "$SHOTS/0${i}_${TAB}.png"
+            xcrun simctl io "$DEVICE" screenshot --type=png "$OUT/0${i}_${TAB}.png"
+            cp "$OUT/0${i}_${TAB}.png" "$SHOTS/0${i}_${TAB}.png" || true
             echo "已截：0${i}_${TAB}.png"
             i=$((i+1))
           done
-          echo "截圖完成："; ls -la "$SHOTS"
-          # 雙保險：把三張圖上傳臨時圖床，URL 印進 log 供 COO 從 Windows 直接下載
-          # （Codemagic artifact 面板偶爾收不到，改走圖床最穩）
-          echo "===UPLOAD_START==="
-          for f in "$SHOTS"/01_youtube.png "$SHOTS"/02_maps.png "$SHOTS"/03_telegram.png; do
-            base=$(basename "$f")
-            URL=$(curl -sf -A "coo-ci" -F "file=@${f}" https://0x0.st 2>/dev/null)
-            if [ -z "$URL" ]; then
-              URL=$(curl -sf --upload-file "$f" "https://transfer.sh/${base}" 2>/dev/null)
-            fi
-            echo "UPLOADED ${base} => ${URL:-UPLOAD_FAILED}"
-          done
-          echo "===UPLOAD_END==="
+          echo "截圖完成："; ls -la "$OUT"
     artifacts:
+      - $CM_EXPORT_DIR/*.png
       - shots/*.png
-      - $CM_BUILD_DIR/shots/*.png
