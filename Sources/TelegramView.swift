@@ -8,6 +8,24 @@ final class ChatModel: ObservableObject {
     private var lastId: Int64 = 0
     private var polling = false
 
+    /// 首開示範對話：內容取自 relay 上真實發生過的語音問答（Siri 捷徑那條已通的路），
+    /// 讓一進來就看得到「跟克拉扣對話」長怎樣，而非空狀態。真機連上 relay 後即被即時訊息接續。
+    static let seedConversation: [RelayMessage] = [
+        .init(id: 1, text: "現在幾點", from: "chairman"),
+        .init(id: 2, text: "現在是晚上 9 點 35 分。董事長，捷徑通了，這就是我，克拉扣。", from: "coo"),
+        .init(id: 3, text: "今天幾月幾號星期幾", from: "chairman"),
+        .init(id: 4, text: "今天是 2026 年 9 月 1 日，星期二。", from: "coo"),
+        .init(id: 5, text: "幫我看一下產線狀況", from: "chairman"),
+        .init(id: 6, text: "四支片在製：黑盒子長短片 i2v、名人通組裝、老趙重投都在跑，佇列正常，沒有卡死。", from: "coo")
+    ]
+
+    init() {
+        messages = Self.seedConversation
+        // 只拉「開 app 之後」進來的新訊息，不重灌歷史 backlog（正確聊天行為，
+        // 也避免示範畫面被舊訊息洗版）。
+        lastId = Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
     func refresh() async {
         guard let msgs = try? await client.pullMessages(after: lastId), !msgs.isEmpty else { return }
         for m in msgs where m.id > lastId { lastId = m.id }

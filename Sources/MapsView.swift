@@ -27,6 +27,24 @@ struct MapsView: View {
             }
             .padding(.horizontal, 16)
 
+            // 常用地點快捷：一點即跳，語音/打字之外的第三種快速入口
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(["台北101", "台北車站", "松山機場", "台積電", "台北醫學大學"], id: \.self) { p in
+                        Button { place = p; query = "" } label: {
+                            Text(p)
+                                .font(Theme.label(13))
+                                .foregroundStyle(place == p ? .white : Theme.maps)
+                                .padding(.horizontal, 13).padding(.vertical, 7)
+                                .background(
+                                    Capsule().fill(place == p ? Theme.maps : Theme.maps.opacity(0.14))
+                                )
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+
             ZStack(alignment: .top) {
                 WebView(html: mapHTML)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
