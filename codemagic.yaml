@@ -72,6 +72,18 @@ workflows:
           xcrun simctl io "$DEVICE" screenshot --type=png "$OUT/05_menuscan.png"
           cp "$OUT/05_menuscan.png" "$SHOTS/05_menuscan.png" || true
           echo "已截：05_menuscan.png"
+          # 董事長令 2026-09-03：每個旅遊功能頁都要截圖（menu 已在 05）
+          i=6
+          for FEAT in guide plan transit talk money diary; do
+            xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" 2>/dev/null || true
+            xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -startTab travel -travelFeature "$FEAT"
+            sleep 10
+            N=$(printf "%02d" "$i")
+            xcrun simctl io "$DEVICE" screenshot --type=png "$OUT/${N}_${FEAT}.png"
+            cp "$OUT/${N}_${FEAT}.png" "$SHOTS/${N}_${FEAT}.png" || true
+            echo "已截：${N}_${FEAT}.png"
+            i=$((i+1))
+          done
           echo "截圖完成："; ls -la "$OUT"
     artifacts:
       - $CM_EXPORT_DIR/*.png
