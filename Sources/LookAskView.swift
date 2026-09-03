@@ -46,6 +46,17 @@ struct LookAskView: View {
                 #if targetEnvironment(simulator)
                 ask()
                 #else
+                #if canImport(MWDATCore)
+                if GlassesManager.shared.connected {
+                    // 眼鏡已連線＝用「眼鏡鏡頭」拍你正看著的東西
+                    Task {
+                        if let data = try? await GlassesManager.shared.capturePhoto(),
+                           let img = UIImage(data: data) { shot = img; ask() }
+                        else if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                    }
+                    return
+                }
+                #endif
                 if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
                 else { ask() }
                 #endif

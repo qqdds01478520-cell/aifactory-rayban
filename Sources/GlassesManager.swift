@@ -14,12 +14,25 @@ import MWDATDisplay
 ///  - 顯示、拍照 = DAT SDK 原生支援。
 ///  - 麥克風、喇叭 = SDK 無 API，另由 VoiceAssistant 走 iOS AVAudioEngine + 藍牙 HFP 路由。
 @MainActor
-final class GlassesManager: CommandExecutor {
+final class GlassesManager: ObservableObject, CommandExecutor {
     static let shared = GlassesManager()
+
+    @Published var registered = false
+    @Published var connected = false
+    @Published var lastError = ""
 
     private var session: DeviceSession?
     private var display: Display?
     private var camera: Camera?
+
+    /// 開機就盯註冊狀態流，反映到 UI。
+    func watchState() {
+        Task { [weak self] in
+            for await state in Wearables.shared.registrationStateStream() {
+                self?.registered = "\(state)".lowercased().contains("registered")
+            }
+        }
+    }
 
     static func configure() {
         do { try Wearables.configure() }
@@ -47,6 +60,7 @@ final class GlassesManager: CommandExecutor {
             c.stream.start()
             camera = c
         }
+        connected = true
     }
 
     func disconnect() {
@@ -54,6 +68,7 @@ final class GlassesManager: CommandExecutor {
         display?.stop()
         session?.stop()
         camera = nil; display = nil; session = nil
+        connected = false
     }
 
     func showText(title: String, body: String) async throws {

@@ -1,11 +1,14 @@
 # XcodeGen 規格 — CI 上用 `xcodegen generate` 生出 .xcodeproj（免本機 Mac 手建專案）。
-# 第一批：純手機 UI（YouTube／地圖／Telegram），不含 MWDAT，確保雲端模擬器編得出畫面截圖。
-# 第二批做眼鏡功能時，把下方 packages/dependencies 的 MWDAT 三段加回即可（原檔在 git 歷史）。
+# 第二批（2026-09-03 董事長「全部做完」令）：MWDAT 眼鏡 SDK 掛回，開發者模式 MetaAppID=0 免註冊。
 name: RaybanCOO
 options:
   bundleIdPrefix: com.aifactory.rayban
   deploymentTarget:
     iOS: "17.0"
+packages:
+  MWDAT:
+    url: https://github.com/facebook/meta-wearables-dat-ios
+    from: 0.9.0
 targets:
   RaybanCOO:
     type: application
@@ -26,6 +29,17 @@ targets:
         RelayAuthKey: $(RELAY_AUTH_KEY)
         CFBundleURLTypes:
           - CFBundleURLSchemes: [raybancoo]
+        MWDAT:
+          MetaAppID: "0"            # 開發者模式（眼鏡端已開）免 Developer Center 註冊
+          AppLinkURLScheme: raybancoo
+          TeamID: 8WZH7F644Z
+    dependencies:
+      - package: MWDAT
+        product: MWDATCore
+      - package: MWDAT
+        product: MWDATCamera
+      - package: MWDAT
+        product: MWDATDisplay
     settings:
       base:
         MARKETING_VERSION: "0.1.0"

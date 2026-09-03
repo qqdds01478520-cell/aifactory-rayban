@@ -46,6 +46,17 @@ struct MenuScanView: View {
                 #if targetEnvironment(simulator)
                 translate()   // 模擬器無相機：直接走示範流程
                 #else
+                #if canImport(MWDATCore)
+                if GlassesManager.shared.connected {
+                    // 眼鏡已連線＝用「眼鏡鏡頭」拍菜單，看哪掃哪
+                    Task {
+                        if let data = try? await GlassesManager.shared.capturePhoto(),
+                           let img = UIImage(data: data) { shot = img; translate() }
+                        else if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                    }
+                    return
+                }
+                #endif
                 if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
                 else { translate() }
                 #endif

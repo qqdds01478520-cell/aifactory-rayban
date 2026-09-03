@@ -29,6 +29,7 @@ enum Theme {
     static let maps = Color(hex: 0x22C55E)    // 翡翠綠
     static let telegram = Color(hex: 0x38BDF8) // 天藍
     static let travel = Color(hex: 0xA78BFA)  // 薰衣草紫（旅遊模式）
+    static let glasses = Color(hex: 0xD9BC7A) // 金（眼鏡連線）
 
     // 字型層級（SF Pro rounded，中文自動走系統）
     static func display(_ size: CGFloat) -> Font { .system(size: size, weight: .heavy, design: .rounded) }
@@ -39,7 +40,7 @@ enum Theme {
 
 /// 一個功能分頁的身分（色彩編碼＋圖示）。
 enum AppTab: String, CaseIterable, Identifiable {
-    case youtube, maps, telegram, travel
+    case youtube, maps, telegram, travel, glasses
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -47,6 +48,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .maps: return "地圖"
         case .telegram: return "Telegram"
         case .travel: return "旅遊"
+        case .glasses: return "眼鏡"
         }
     }
     var icon: String {
@@ -55,6 +57,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .maps: return "map.fill"
         case .telegram: return "paperplane.fill"
         case .travel: return "airplane"
+        case .glasses: return "eyeglasses"
         }
     }
     var accent: Color {
@@ -63,6 +66,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .maps: return Theme.maps
         case .telegram: return Theme.telegram
         case .travel: return Theme.travel
+        case .glasses: return Theme.glasses
         }
     }
     var hint: String {
@@ -71,6 +75,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .maps: return "找地點・語音／打字都行"
         case .telegram: return "跟克拉扣說話・語音／打字"
         case .travel: return "克拉扣隨行・導遊/菜單/行程"
+        case .glasses: return "連 Ray-Ban Display・鏡頭/鏡片"
         }
     }
 }
