@@ -88,3 +88,55 @@ workflows:
     artifacts:
       - $CM_EXPORT_DIR/*.png
       - shots/*.png
+  ios-adhoc:
+    name: iOS 正式簽署 Ad Hoc IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+      groups:
+        - ios_signing
+      vars:
+        BUNDLE_ID: "com.aifactory.rayban.RaybanCOO"
+        TEAM_ID: "8WZH7F644Z"
+    scripts:
+      - name: 安裝 XcodeGen＋生成專案
+        script: |
+          brew install xcodegen
+          xcodegen generate
+      - name: 憑證進鑰匙圈＋放描述檔
+        script: |
+          set -e
+          echo "$CM_CERT_P12_B64" | base64 --decode > /tmp/cert.p12
+          keychain initialize
+          keychain add-certificates --certificate /tmp/cert.p12 --certificate-password "$CM_CERT_PASSWORD"
+          PROFILES_HOME="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES_HOME"
+          echo "$CM_PROFILE_B64" | base64 --decode > "$PROFILES_HOME/RaybanCOO_AdHoc.mobileprovision"
+          security find-identity -v /Users/builder/Library/codemagic-cli-tools/keychains/*.keychain-db || true
+      - name: Archive＋匯出 Ad Hoc IPA
+        script: |
+          set -e
+          xcodebuild -project RaybanCOO.xcodeproj -scheme RaybanCOO -sdk iphoneos -configuration Release archive \
+            -archivePath build/RaybanCOO.xcarchive \
+            RELAY_AUTH_KEY="${RELAY_AUTH_KEY:-}" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="iPhone Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="RaybanCOO AdHoc"
+          cat > /tmp/export.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>method</key><string>ad-hoc</string>
+          <key>teamID</key><string>8WZH7F644Z</string>
+          <key>signingStyle</key><string>manual</string>
+          <key>provisioningProfiles</key><dict>
+          <key>com.aifactory.rayban.RaybanCOO</key><string>RaybanCOO AdHoc</string>
+          </dict>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath build/RaybanCOO.xcarchive -exportPath export_ipa -exportOptionsPlist /tmp/export.plist
+          ls -la export_ipa
+    artifacts:
+      - export_ipa/*.ipa
