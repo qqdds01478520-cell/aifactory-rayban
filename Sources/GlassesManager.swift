@@ -34,10 +34,11 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         guard !watching else { return }
         watching = true
         if selector == nil { selector = AutoDeviceSelector(wearables: Wearables.shared) }
+        // 先讀「當下值」再聽流（官方樣本寫法）——流不重播現值，只聽流會漏掉已綁定狀態
+        registered = Wearables.shared.registrationState == .registered
         Task { [weak self] in
             for await state in Wearables.shared.registrationStateStream() {
-                // 精確比對——"unregistered" 也包含 "registered" 子字串，不能用 contains
-                self?.registered = "\(state)" == "registered"
+                self?.registered = state == .registered
             }
         }
         Task { [weak self] in
