@@ -126,7 +126,14 @@ struct LookAskView: View {
                 let relay = RelayClient(authKey: AppConfig.authKey)
                 _ = try? await relay.uploadPhoto(jpeg)
                 let raw = (try? await relay.ask("看著問：剛上傳的照片裡是什麼？兩三句講重點，像導遊在耳邊講。")) ?? ""
-                stage = .done(raw.isEmpty ? demoAnswer : raw)
+                let answer = raw.isEmpty ? demoAnswer : raw
+                stage = .done(answer)
+                #if canImport(MWDATCore)
+                // 畫面在鏡片不在手機（董事長 2026-09-03 核心要求）：答案直接浮上鏡片
+                if GlassesManager.shared.connected {
+                    try? await GlassesManager.shared.showText(title: "你看到的是", body: answer)
+                }
+                #endif
             } else {
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 stage = .done(demoAnswer)

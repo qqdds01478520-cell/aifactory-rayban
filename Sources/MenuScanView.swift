@@ -143,7 +143,15 @@ struct MenuScanView: View {
                 _ = try? await relay.uploadPhoto(jpeg)
                 // 克拉扣端翻譯回 JSON（菜名|中文|價錢|一句話）；解析失敗退示範
                 let raw = (try? await relay.ask("菜單翻譯：剛上傳的照片，回JSON陣列 zh/note/price")) ?? ""
-                stage = .done(MenuDish.parse(raw) ?? MenuDish.demo)
+                let dishes = MenuDish.parse(raw) ?? MenuDish.demo
+                stage = .done(dishes)
+                #if canImport(MWDATCore)
+                // 畫面在鏡片不在手機：翻好的菜單直接浮上鏡片
+                if GlassesManager.shared.connected {
+                    let lines = dishes.prefix(5).map { "\($0.zh)　\($0.price)" }.joined(separator: "\n")
+                    try? await GlassesManager.shared.showText(title: "中文菜單", body: lines)
+                }
+                #endif
             } else {
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 stage = .done(MenuDish.demo)
