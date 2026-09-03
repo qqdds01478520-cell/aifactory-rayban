@@ -28,6 +28,8 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     private var camera: Camera?
     private var tokens: [Any] = []       // listen 回傳的訂閱 token，要抓著不放
     private var watching = false
+    private let speech = SpeechRecognizer()
+    private var jarvisRunning = false
 
     /// 開機就盯註冊狀態流＋裝置偵測流，反映到 UI。（冪等，可重複呼叫）
     func watchState() {
@@ -142,6 +144,44 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         return "session=\(s) display=\(display != nil) camera=\(camera != nil)"
     }
 
+    /// 聽一句話（最長 maxSeconds 秒；辨識器自然收尾就提早停），回最終文字。
+    /// 眼鏡連著時 iOS 會走藍牙麥克風＝眼鏡收音。
+    func listenOnce(maxSeconds: Int = 7) async -> String {
+        if !speech.authorized { await speech.requestPermission() }
+        guard speech.authorized else { return "" }
+        speech.transcript = ""
+        speech.start { _ in }
+        for _ in 0..<(maxSeconds * 4) {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            if !speech.isListening { break }
+        }
+        speech.stop()
+        return speech.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 賈維斯模式：持續聽寫逐段傳克拉扣＋每 10 秒眼鏡拍一張上傳（＝克拉扣的視野）。
+    /// 安全上限 15 分鐘自動停，網頁離開也會下 jarvis_stop。
+    private func startJarvis() {
+        guard !jarvisRunning else { return }
+        jarvisRunning = true
+        let relay = RelayClient(authKey: AppConfig.authKey)
+        let started = Date()
+        Task { [weak self] in   // 聽寫迴圈
+            while self?.jarvisRunning == true, Date().timeIntervalSince(started) < 900 {
+                guard let self else { break }
+                let heard = await self.listenOnce(maxSeconds: 10)
+                if !heard.isEmpty, self.jarvisRunning { _ = try? await relay.askText("[賈維斯] " + heard) }
+            }
+            self?.jarvisRunning = false
+        }
+        Task { [weak self] in   // 視野迴圈
+            while self?.jarvisRunning == true, Date().timeIntervalSince(started) < 900 {
+                if let data = try? await self?.capturePhoto() { _ = try? await relay.uploadPhoto(data) }
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+            }
+        }
+    }
+
     func execute(_ cmd: RemoteCommand) async -> CommandResult {
         do {
             switch cmd.action {
@@ -153,6 +193,24 @@ final class GlassesManager: ObservableObject, CommandExecutor {
                 let data = try await capturePhoto()
                 let id = try await RelayClient(authKey: AppConfig.authKey).uploadPhoto(data)
                 return CommandResult(id: cmd.id, ok: true, result: "photo:\(id)", log: "\(data.count)B")
+            case "voiceask":
+                // 全域雙捏手勢：聽一句 → 傳克拉扣 → 答案回蓋在當前眼鏡頁上
+                let heard = await listenOnce(maxSeconds: 8)
+                guard !heard.isEmpty else {
+                    return CommandResult(id: cmd.id, ok: false, result: "", log: "沒收到聲音，再捏兩下重講")
+                }
+                let vr = RelayClient(authKey: AppConfig.authKey)
+                let vqid = try await vr.askText("[語音] " + heard)
+                if let ans = await vr.pollAnswer(id: vqid, timeout: 90) {
+                    return CommandResult(id: cmd.id, ok: true, result: "🗣 \(heard)\n— \(ans)", log: "qid:\(vqid)")
+                }
+                return CommandResult(id: cmd.id, ok: false, result: "", log: "克拉扣還在想，再捏兩下重問")
+            case "jarvis_start":
+                startJarvis()
+                return CommandResult(id: cmd.id, ok: true, result: "jarvis on", log: "")
+            case "jarvis_stop":
+                jarvisRunning = false
+                return CommandResult(id: cmd.id, ok: true, result: "jarvis off", log: "")
             case "lookask", "menuscan":
                 // 眼鏡網頁下的單（網頁＝畫面、app＝後台引擎）：眼鏡拍→送問→答案回網頁
                 let data = try await capturePhoto()

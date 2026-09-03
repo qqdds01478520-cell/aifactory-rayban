@@ -33,6 +33,17 @@ struct RelayClient {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+    /// 純文字問題進佇列（不等答案），回單號；答案用 pollAnswer 拿。
+    func askText(_ text: String) async throws -> String {
+        var req = URLRequest(url: url("/ask"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["text": text])
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (obj?["id"] as? String) ?? ""
+    }
+
     /// 帶照片的問答：照片跟問題綁同一單（COO 端看得到圖才答得準）。回單號。
     func askPhoto(_ jpeg: Data, text: String) async throws -> String {
         var req = URLRequest(url: url("/ask"))
