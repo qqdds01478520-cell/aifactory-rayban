@@ -95,7 +95,8 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     }
 
     func statusText() -> String {
-        let s = session?.statePublisher.value.map { "\($0)" } ?? "no-session"
+        // Announcer 沒有 .value（只能 listen 訂閱），狀態用自己手上的物件判斷
+        let s = session != nil ? "up" : "no-session"
         return "session=\(s) display=\(display != nil) camera=\(camera != nil)"
     }
 
