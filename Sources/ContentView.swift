@@ -60,6 +60,7 @@ struct ContentView: View {
         case .youtube: YouTubeView()
         case .maps: MapsView()
         case .telegram: TelegramView()
+        case .travel: TravelHome()
         }
     }
 

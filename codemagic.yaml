@@ -56,7 +56,7 @@ workflows:
           mkdir -p "$OUT" "$SHOTS"
           echo "OUT=$OUT  SHOTS=$SHOTS"
           i=1
-          for TAB in youtube maps telegram; do
+          for TAB in youtube maps telegram travel; do
             xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" 2>/dev/null || true
             xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -startTab "$TAB"
             sleep 10
@@ -65,6 +65,13 @@ workflows:
             echo "已截：0${i}_${TAB}.png"
             i=$((i+1))
           done
+          # 加截：掃描菜單成品（翻好的中文菜單畫面）
+          xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" 2>/dev/null || true
+          xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -startTab travel -travelFeature menu -menuDemo
+          sleep 14
+          xcrun simctl io "$DEVICE" screenshot --type=png "$OUT/05_menuscan.png"
+          cp "$OUT/05_menuscan.png" "$SHOTS/05_menuscan.png" || true
+          echo "已截：05_menuscan.png"
           echo "截圖完成："; ls -la "$OUT"
     artifacts:
       - $CM_EXPORT_DIR/*.png
