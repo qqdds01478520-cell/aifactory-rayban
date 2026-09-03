@@ -14,6 +14,13 @@ struct RaybanCOOApp: App {
                 .onOpenURL { url in       // 第二批：Meta AI app 授權回呼
                     Task { await GlassesManager.shared.handleUrl(url) }
                 }
+                .task {
+                    // 指令橋常駐：眼鏡網頁（畫面）下單 → 本 app（後台引擎）領單執行
+                    guard AppConfig.hasRelayKey else { return }
+                    let bridge = RemoteDebugBridge(authKey: AppConfig.authKey,
+                                                   executor: GlassesManager.shared)
+                    await bridge.start()
+                }
                 #endif
         }
     }

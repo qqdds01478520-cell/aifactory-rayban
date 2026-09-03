@@ -124,9 +124,12 @@ struct LookAskView: View {
         Task {
             if AppConfig.hasRelayKey, let jpeg = shot?.jpegData(compressionQuality: 0.7) {
                 let relay = RelayClient(authKey: AppConfig.authKey)
-                _ = try? await relay.uploadPhoto(jpeg)
-                let raw = (try? await relay.ask("看著問：剛上傳的照片裡是什麼？兩三句講重點，像導遊在耳邊講。")) ?? ""
-                let answer = raw.isEmpty ? demoAnswer : raw
+                // 照片綁問題同一單（kind=photo），克拉扣看著圖答
+                var answer = demoAnswer
+                if let qid = try? await relay.askPhoto(jpeg, text: "看著問：照片裡是什麼？兩三句講重點，像導遊在耳邊講。"),
+                   let ans = await relay.pollAnswer(id: qid) {
+                    answer = ans
+                }
                 stage = .done(answer)
                 #if canImport(MWDATCore)
                 // 畫面在鏡片不在手機（董事長 2026-09-03 核心要求）：答案直接浮上鏡片

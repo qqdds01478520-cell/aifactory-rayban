@@ -152,6 +152,18 @@ final class GlassesManager: ObservableObject, CommandExecutor {
                 let data = try await capturePhoto()
                 let id = try await RelayClient(authKey: AppConfig.authKey).uploadPhoto(data)
                 return CommandResult(id: cmd.id, ok: true, result: "photo:\(id)", log: "\(data.count)B")
+            case "lookask", "menuscan":
+                // 眼鏡網頁下的單（網頁＝畫面、app＝後台引擎）：眼鏡拍→送問→答案回網頁
+                let data = try await capturePhoto()
+                let relay = RelayClient(authKey: AppConfig.authKey)
+                let prompt = cmd.action == "lookask"
+                    ? "看著問：照片裡是什麼？兩三句講重點，像導遊在耳邊講。"
+                    : "菜單翻譯：把照片裡的菜單翻成繁體中文，一行一道「菜名　價錢」，最多八行，最後加一行推薦。"
+                let qid = try await relay.askPhoto(data, text: prompt)
+                if let ans = await relay.pollAnswer(id: qid) {
+                    return CommandResult(id: cmd.id, ok: true, result: ans, log: "qid:\(qid)")
+                }
+                return CommandResult(id: cmd.id, ok: false, result: "", log: "克拉扣還在想，捏一下重試")
             case "status":
                 return CommandResult(id: cmd.id, ok: true, result: statusText(), log: "")
             default:

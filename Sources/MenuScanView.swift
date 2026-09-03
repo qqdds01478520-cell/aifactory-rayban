@@ -140,9 +140,12 @@ struct MenuScanView: View {
         Task {
             if AppConfig.hasRelayKey, let jpeg = shot?.jpegData(compressionQuality: 0.7) {
                 let relay = RelayClient(authKey: AppConfig.authKey)
-                _ = try? await relay.uploadPhoto(jpeg)
-                // 克拉扣端翻譯回 JSON（菜名|中文|價錢|一句話）；解析失敗退示範
-                let raw = (try? await relay.ask("菜單翻譯：剛上傳的照片，回JSON陣列 zh/note/price")) ?? ""
+                // 照片綁問題同一單（kind=photo）；克拉扣回 JSON 陣列，解析失敗退示範
+                var raw = ""
+                if let qid = try? await relay.askPhoto(jpeg, text: "菜單翻譯：照片裡的菜單翻成繁體中文，只回JSON陣列，每項 {\"zh\":菜名,\"note\":一句話,\"price\":價錢}，最多八項，不要其他文字。"),
+                   let ans = await relay.pollAnswer(id: qid) {
+                    raw = ans
+                }
                 let dishes = MenuDish.parse(raw) ?? MenuDish.demo
                 stage = .done(dishes)
                 #if canImport(MWDATCore)

@@ -33,6 +33,34 @@ struct RelayClient {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+    /// 帶照片的問答：照片跟問題綁同一單（COO 端看得到圖才答得準）。回單號。
+    func askPhoto(_ jpeg: Data, text: String) async throws -> String {
+        var req = URLRequest(url: url("/ask"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: [
+            "text": text, "photo_b64": jpeg.base64EncodedString()])
+        req.timeoutInterval = 60
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (obj?["id"] as? String) ?? ""
+    }
+
+    /// 輪詢答案（/answer/{id}），最多 timeout 秒；沒等到回 nil。
+    func pollAnswer(id: String, timeout: TimeInterval = 100) async -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let (data, _) = try? await URLSession.shared.data(from: url("/answer/\(id)")),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               (obj["answered"] as? Bool) == true,
+               let a = obj["answer"] as? String, !a.isEmpty {
+                return a
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+        return nil
+    }
+
     /// 拍照上傳，回傳伺服器分配的 photo id（之後 COO 可用 /photo/{id} 取回辨識）。
     func uploadPhoto(_ jpeg: Data) async throws -> String {
         var req = URLRequest(url: url("/photo"))
