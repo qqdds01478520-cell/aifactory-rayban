@@ -20,6 +20,7 @@ struct TravelHome: View {
         .init(id: "talk", title: "雙向翻譯", sub: "跟當地人對話，雙向字幕", icon: "bubble.left.and.bubble.right.fill", tint: Color(hex: 0xA78BFA)),
         .init(id: "money", title: "旅費帳房", sub: "講一聲就記帳＋匯率＋日結", icon: "yensign.circle.fill", tint: Color(hex: 0xF472B6)),
         .init(id: "diary", title: "旅行日記", sub: "一天走過的路，自動編成影片", icon: "film.stack", tint: Color(hex: 0x34D399)),
+        .init(id: "look", title: "看著問", sub: "盯著東西按一下，克拉扣看你所看", icon: "eye.fill", tint: Color(hex: 0x6366F1)),
     ]
 
     var body: some View {
@@ -83,6 +84,7 @@ struct TravelHome: View {
         case "transit": TransitView()
         case "talk": TranslateView()
         case "money": ExpenseView()
+        case "look": LookAskView()
         default: DiaryView()
         }
     }

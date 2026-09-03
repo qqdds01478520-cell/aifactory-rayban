@@ -74,7 +74,7 @@ workflows:
           echo "已截：05_menuscan.png"
           # 董事長令 2026-09-03：每個旅遊功能頁都要截圖（menu 已在 05）
           i=6
-          for FEAT in guide plan transit talk money diary; do
+          for FEAT in guide plan transit talk money diary look; do
             xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" 2>/dev/null || true
             xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -startTab travel -travelFeature "$FEAT"
             sleep 10
