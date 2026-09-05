@@ -50,8 +50,13 @@ struct GlassesLiveView: View {
                         log = "綁定成功 ✅ 接著按②連線"
                     } else {
                         let err = GlassesManager.shared.lastError
-                        log = "同意後仍未綁定。可能：Meta AI 沒回跳本 app／眼鏡未在 Meta AI 連線／授權被 Meta 端拒絕。"
-                            + (err.isEmpty ? "" : "\n錯誤：\(err)")
+                        log = """
+                        還是沒綁上。九成是 Meta AI 的「開發者模式」沒開（Meta AI 更新後會關掉）。開法：
+                        1. 開 Meta AI app → 設定 → App 資訊
+                        2. 對「App 版本」數字連點 5 下 → 出現開發者模式開關
+                        3. 打開「開發者模式」按啟用
+                        4. 回來這裡再按一次①
+                        """ + (err.isEmpty ? "" : "\n（錯誤細節：\(err)）")
                         RemoteLog.send("bind watchdog: still unregistered after 25s, lastError=\(err.isEmpty ? "-" : err)")
                     }
                 }
