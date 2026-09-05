@@ -18,6 +18,8 @@ final class AudioHub {
     private var task: SFSpeechRecognitionTask?
     private var running = false
     private var finished = false
+    private var metering = false
+    private var peakLevel: Float = 0   // 聽寫期間麥克風實際收到的最大音量（診斷用）
 
     var transcript = ""
     var authorized = false
@@ -37,15 +39,29 @@ final class AudioHub {
         guard !running else { return }
         do {
             let s = AVAudioSession.sharedInstance()
-            // .playAndRecord＋.mixWithOthers＝背景可持續收音又不搶佔別的 app 音訊
-            try s.setCategory(.playAndRecord, mode: .measurement,
-                              options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker])
+            // .playAndRecord＋.mixWithOthers＝背景可持續收音又不搶佔別的 app 音訊。
+            // ⚠絕不加 .allowBluetooth：眼鏡是藍牙裝置，iOS 會把「麥克風輸入」路由到眼鏡
+            //   的 HFP 麥（MWDAT 顯示模式/離線時只給靜音）＝害我們聽到一片空白。強制手機內建麥。
+            // mode 用 .default（非 .measurement——.measurement 關掉 AGC，人聲會更小聲難辨識）。
+            try s.setCategory(.playAndRecord, mode: .default,
+                              options: [.mixWithOthers, .defaultToSpeaker])
             try s.setActive(true, options: [])
+            if let ins = s.availableInputs,
+               let builtIn = ins.first(where: { $0.portType == .builtInMic }) {
+                try? s.setPreferredInput(builtIn)   // 鎖手機內建麥，不吃眼鏡藍牙麥
+            }
 
             let input = engine.inputNode
             let fmt = input.outputFormat(forBus: 0)
             input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { [weak self] buf, _ in
-                self?.request?.append(buf)   // 有辨識請求就餵、沒有就丟；麥克風一路開著
+                guard let self else { return }
+                self.request?.append(buf)   // 有辨識請求就餵、沒有就丟；麥克風一路開著
+                if self.metering, let ch = buf.floatChannelData?[0] {
+                    var mx: Float = 0
+                    let n = Int(buf.frameLength)
+                    for i in 0..<n { let v = abs(ch[i]); if v > mx { mx = v } }
+                    if mx > self.peakLevel { self.peakLevel = mx }
+                }
             }
             engine.prepare()
             try engine.start()
@@ -84,6 +100,8 @@ final class AudioHub {
 
         transcript = ""
         finished = false
+        peakLevel = 0
+        metering = true
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
         request = req
@@ -100,6 +118,11 @@ final class AudioHub {
         task?.cancel()
         task = nil
         request = nil   // 停止餵 buffer（麥克風＋引擎仍常駐）
-        return transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        metering = false
+        let route = AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName ?? "無"
+        let out = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 診斷：麥克風實收峰值音量＋當前輸入路由＋辨識到的字，一次打回遙測
+        RemoteLog.send("listenOnce 峰值=\(String(format: "%.3f", peakLevel)) 路由=\(route) 字=「\(out)」")
+        return out
     }
 }
