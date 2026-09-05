@@ -96,6 +96,7 @@ final class GlassesManager: ObservableObject, CommandExecutor {
 
     /// 已連就直接用，沒連就連——③④「用時才連」的入口
     func ensureConnected() async throws {
+        releaseGen += 1   // 新動作開始＝取消排程中的自動斷線，別在動作中途被斷
         if connected, let s = session, s.state == .started { return }
         try await connect()
     }
@@ -133,6 +134,7 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     func connect() async throws {
         lastError = ""
         watchState()
+        if session != nil { disconnect() }   // 舊 session 沒清就 createSession 會 sessionAlreadyExists
         triggerLocalNetworkPrompt()
         guard registered else { throw GlassesError.notRegistered }
         // 1) 等眼鏡在線（最多 12 秒；watchState 的裝置流會把 hasDevice 翻 true）
