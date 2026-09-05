@@ -100,7 +100,22 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     func ensureConnected() async throws {
         releaseGen += 1   // 新動作開始＝取消排程中的自動斷線，別在動作中途被斷
         if connected, let s = session, s.state == .started { return }
-        try await connect()
+        // 自動重試（董事長「你自己遠端搞」＝不能靠他重握手）：session 起不來多半是
+        // 眼鏡端上一條連線還沒釋放，斷乾淨＋等一下再連就會成。最多 3 輪。
+        var lastErr: Error?
+        for attempt in 1...3 {
+            do {
+                try await connect()
+                if attempt > 1 { RemoteLog.send("connect 第 \(attempt) 次重試成功") }
+                return
+            } catch {
+                lastErr = error
+                RemoteLog.send("connect 第 \(attempt)/3 次失敗: \(error)")
+                disconnect()   // 清乾淨本地 session，讓眼鏡端也釋放
+                if attempt < 3 { try? await Task.sleep(nanoseconds: 3_000_000_000) }
+            }
+        }
+        throw lastErr ?? GlassesError.notConnected
     }
 
     /// 動作完成後 N 秒自動斷線，把眼鏡畫面還給原生系統（SDK session 期間眼鏡 HUD 會被熄掉，

@@ -71,10 +71,9 @@ final class SpeechRecognizer: ObservableObject {
         task?.cancel()
         request = nil; task = nil
         isListening = false
-        // 賈維斯保活期間不停用 session，否則背景會被凍結（聽寫間隙也算）
-        if !keepAlive {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        }
+        // 收音結束＝把 audio 類別切回 .playback（不亮橘點），但「絕不停用 session」——
+        // BackgroundKeepAlive 的無聲循環播放要靠 session 常駐才能維持背景不凍結。
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
     }
 }
 

@@ -22,7 +22,10 @@ struct RaybanCOOApp: App {
                     await bridge.start()
                 }
                 .task {
-                    // 只掛狀態監看；不再開機自動拍照（會搶眼鏡畫面＋背景凍結留殭屍 session）
+                    // 背景常駐保活：app 一開就佔住 audio 背景模式，退背景/鎖屏都不凍結，
+                    // 讓遠端指令橋 24 小時領得到單（董事長「裝一次之後你自己遠端搞」）。
+                    BackgroundKeepAlive.shared.start()
+                    // 掛狀態監看；不開機自動拍照（會搶眼鏡畫面＋背景凍結留殭屍 session）
                     guard AppConfig.hasRelayKey else { return }
                     GlassesManager.shared.watchState()
                 }
