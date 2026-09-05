@@ -29,6 +29,8 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     private var camera: Camera?
     private var tokens: [Any] = []       // listen 回傳的訂閱 token，要抓著不放
     private var photoToken: Any?         // 拍照回調訂閱——區域變數會被提早釋放害回調永遠不來
+    private var displayToken: Any?       // 顯示狀態訂閱（同上，必須存屬性）
+    private var displayState: DisplayState?   // 官方要求：send 前必等 .started
     private var streamState: StreamState = .stopped   // 拍照前置條件：必須 .streaming（官方 sample 鐵則）
     private var watching = false
     private let speech = SpeechRecognizer()
@@ -202,6 +204,7 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         display?.stop()
         session?.stop()
         camera = nil; display = nil; session = nil
+        displayToken = nil; displayState = nil
         tokens.removeAll()
         streamState = .stopped
         connected = false
@@ -215,10 +218,26 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         guard let s = session, s.state == .started else { throw GlassesError.notConnected }
         if display == nil {
             let d = try s.addDisplay()
+            displayState = nil
+            displayToken = d.statePublisher.listen { [weak self] st in
+                Task { @MainActor in
+                    self?.displayState = st
+                    RemoteLog.send("displayState → \(st)")
+                }
+            }
             d.start()
             display = d
         }
         guard let display else { throw GlassesError.notConnected }
+        // 官方鐵則：display.start() 後必等 DisplayState.started 才能 send（最多 8 秒）
+        var dw = 0
+        while displayState != .started && dw < 32 {
+            try await Task.sleep(nanoseconds: 250_000_000)
+            dw += 1
+        }
+        guard displayState == .started else {
+            throw GlassesError.streamNotReady("display \(String(describing: displayState))")
+        }
         try await display.send(
             FlexBox(direction: .column, spacing: 10) {
                 Text(title, style: .heading)
@@ -235,6 +254,8 @@ final class GlassesManager: ObservableObject, CommandExecutor {
             guard let self, self.displayGen == gen else { return }
             self.display?.stop()
             self.display = nil
+            self.displayToken = nil
+            self.displayState = nil
             RemoteLog.send("display released (auto)")
         }
     }
