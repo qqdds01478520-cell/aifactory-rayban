@@ -39,16 +39,22 @@ final class AudioHub {
         guard !running else { return }
         do {
             let s = AVAudioSession.sharedInstance()
-            // .playAndRecord＋.mixWithOthers＝背景可持續收音又不搶佔別的 app 音訊。
-            // ⚠絕不加 .allowBluetooth：眼鏡是藍牙裝置，iOS 會把「麥克風輸入」路由到眼鏡
-            //   的 HFP 麥（MWDAT 顯示模式/離線時只給靜音）＝害我們聽到一片空白。強制手機內建麥。
-            // mode 用 .default（非 .measurement——.measurement 關掉 AGC，人聲會更小聲難辨識）。
-            try s.setCategory(.playAndRecord, mode: .default,
-                              options: [.mixWithOthers, .defaultToSpeaker])
+            // 董事長要「眼鏡聽」。Meta 官方：眼鏡 5 麥直接串流留給 Meta AI，第三方拿眼鏡收音
+            //   官方指定走「iOS 藍牙 profile」＝眼鏡當藍牙耳麥、mic 走 Bluetooth HFP 進手機。
+            //   所以要 .allowBluetoothHFP，並把 preferredInput 明確鎖到 bluetoothHFP 埠（眼鏡）。
+            // mode 用 .videoRecording（照官方 CameraAccess 範例，眼鏡收音走這個 mode）。
+            try s.setCategory(.playAndRecord, mode: .videoRecording,
+                              options: [.allowBluetoothHFP, .mixWithOthers, .defaultToSpeaker])
             try s.setActive(true, options: [])
-            if let ins = s.availableInputs,
-               let builtIn = ins.first(where: { $0.portType == .builtInMic }) {
-                try? s.setPreferredInput(builtIn)   // 鎖手機內建麥，不吃眼鏡藍牙麥
+            // 優先鎖眼鏡藍牙麥；眼鏡沒接上才退回手機內建麥（並在遙測講明用哪支）。
+            if let ins = s.availableInputs {
+                if let hfp = ins.first(where: { $0.portType == .bluetoothHFP }) {
+                    try? s.setPreferredInput(hfp)
+                    RemoteLog.send("audioHub: 鎖眼鏡藍牙麥 \(hfp.portName)")
+                } else if let builtIn = ins.first(where: { $0.portType == .builtInMic }) {
+                    try? s.setPreferredInput(builtIn)
+                    RemoteLog.send("audioHub: ⚠眼鏡藍牙麥沒接上，暫用手機麥（戴上眼鏡+藍牙連上再試）")
+                }
             }
 
             let input = engine.inputNode
@@ -76,8 +82,26 @@ final class AudioHub {
                       AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
                 Task { @MainActor in self.resume() }
             }
+            // 路由變（眼鏡連上/斷開）就重挑輸入麥，讓眼鏡一連上就自動切成眼鏡麥。
+            NotificationCenter.default.addObserver(
+                forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.preferGlassesMic() }
+            }
         } catch {
             RemoteLog.send("audioHub 啟動失敗: \(error)")
+        }
+    }
+
+    /// 有眼鏡藍牙麥就鎖眼鏡、沒有退手機麥（路由變時呼叫）。
+    private func preferGlassesMic() {
+        let s = AVAudioSession.sharedInstance()
+        guard let ins = s.availableInputs else { return }
+        if let hfp = ins.first(where: { $0.portType == .bluetoothHFP }) {
+            try? s.setPreferredInput(hfp)
+            RemoteLog.send("audioHub: 路由變→切眼鏡藍牙麥 \(hfp.portName)")
+        } else if let builtIn = ins.first(where: { $0.portType == .builtInMic }) {
+            try? s.setPreferredInput(builtIn)
         }
     }
 
@@ -119,10 +143,12 @@ final class AudioHub {
         task = nil
         request = nil   // 停止餵 buffer（麥克風＋引擎仍常駐）
         metering = false
-        let route = AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName ?? "無"
+        let inPort = AVAudioSession.sharedInstance().currentRoute.inputs.first
+        let route = inPort?.portName ?? "無"
+        let which = inPort?.portType == .bluetoothHFP ? "眼鏡麥" : (inPort?.portType == .builtInMic ? "手機麥" : "其他")
         let out = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        // 診斷：麥克風實收峰值音量＋當前輸入路由＋辨識到的字，一次打回遙測
-        RemoteLog.send("listenOnce 峰值=\(String(format: "%.3f", peakLevel)) 路由=\(route) 字=「\(out)」")
+        // 診斷：麥克風實收峰值音量＋當前用哪支麥＋辨識到的字，一次打回遙測
+        RemoteLog.send("listenOnce 用\(which)(\(route)) 峰值=\(String(format: "%.3f", peakLevel)) 字=「\(out)」")
         return out
     }
 }
