@@ -1,10 +1,10 @@
 import AVFoundation
 import Speech
 
-/// 麥克風收音中樞。董事長 2026-09-05：「點開 app 手機就背景錄音」要拿掉——
-/// 改成不常駐、不自動錄音：只有 listenOnce 要聽的當下才 startAlwaysOn 開麥、
-/// 聽完 stopEngine 立刻關（橘色麥克風點只在聽的那幾秒亮，平常完全不錄）。
-/// 收音來源：眼鏡藍牙 HFP 麥優先（眼鏡連上時），否則退手機內建麥。聽寫走 zh-TW。
+/// 麥克風收音中樞。董事長 2026-09-05 定調：手機常駐錄音＝不要；眼鏡常駐背景聽＝可以。
+/// 所以：**只用眼鏡藍牙 HFP 麥**——眼鏡連著就把麥一直開著、背景持續聽（跟連續轉錄助手一樣）；
+/// 眼鏡一斷開就立刻關麥，**絕不掉回用手機內建麥錄音**。聽寫走 zh-TW。
+/// 眼鏡連上/斷開靠 routeChange 監看自動開關（syncToGlasses）。
 @MainActor
 final class AudioHub {
     static let shared = AudioHub()
@@ -32,30 +32,57 @@ final class AudioHub {
         authorized = sp && mic
     }
 
-    /// 開麥克風收音（只在 listenOnce 要聽的當下呼叫；聽完 stopEngine 關掉）。
-    /// 不再開機常駐——董事長 2026-09-05 要求平常不錄音。
+    /// 啟用（app 一開就呼叫一次）：設好 audio session＋掛路由/中斷監看，
+    /// 然後 syncToGlasses——眼鏡藍牙連著就開麥常駐、沒連就完全不錄。
     func startAlwaysOn() {
-        guard !running else { return }
+        let s = AVAudioSession.sharedInstance()
         do {
-            let s = AVAudioSession.sharedInstance()
-            // 董事長要「眼鏡聽」。Meta 官方：眼鏡 5 麥直接串流留給 Meta AI，第三方拿眼鏡收音
-            //   官方指定走「iOS 藍牙 profile」＝眼鏡當藍牙耳麥、mic 走 Bluetooth HFP 進手機。
-            //   所以要 .allowBluetoothHFP，並把 preferredInput 明確鎖到 bluetoothHFP 埠（眼鏡）。
-            // mode 用 .videoRecording（照官方 CameraAccess 範例，眼鏡收音走這個 mode）。
+            // 眼鏡收音走 Bluetooth HFP：.allowBluetoothHFP＋mode .videoRecording（照官方範例）。
             try s.setCategory(.playAndRecord, mode: .videoRecording,
                               options: [.allowBluetoothHFP, .mixWithOthers, .defaultToSpeaker])
-            try s.setActive(true, options: [])
-            // 優先鎖眼鏡藍牙麥；眼鏡沒接上才退回手機內建麥（並在遙測講明用哪支）。
-            if let ins = s.availableInputs {
-                if let hfp = ins.first(where: { $0.portType == .bluetoothHFP }) {
-                    try? s.setPreferredInput(hfp)
-                    RemoteLog.send("audioHub: 鎖眼鏡藍牙麥 \(hfp.portName)")
-                } else if let builtIn = ins.first(where: { $0.portType == .builtInMic }) {
-                    try? s.setPreferredInput(builtIn)
-                    RemoteLog.send("audioHub: ⚠眼鏡藍牙麥沒接上，暫用手機麥（戴上眼鏡+藍牙連上再試）")
-                }
-            }
+        } catch { RemoteLog.send("audioHub 設定 session 失敗: \(error)") }
 
+        if !observersInstalled {
+            observersInstalled = true
+            NotificationCenter.default.addObserver(
+                forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+            ) { [weak self] note in
+                guard let self, let info = note.userInfo,
+                      let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                      AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+                Task { @MainActor in self.resume() }
+            }
+            // 路由變（眼鏡連上/斷開）→ 重新對齊：連上就開眼鏡麥、斷開就關麥。
+            NotificationCenter.default.addObserver(
+                forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.syncToGlasses() }
+            }
+        }
+        syncToGlasses()
+    }
+
+    /// 眼鏡藍牙麥連著→開麥常駐（背景持續聽）；沒連著→關麥、絕不掉回手機麥錄音。
+    /// 董事長 2026-09-05：手機常駐錄音不要，眼鏡常駐背景聽可以。
+    private func syncToGlasses() {
+        let s = AVAudioSession.sharedInstance()
+        let hfp = s.availableInputs?.first(where: { $0.portType == .bluetoothHFP })
+        if let hfp {
+            if !running { beginCapture(preferred: hfp) }
+        } else {
+            if running {
+                stopEngine()
+                RemoteLog.send("audioHub: 眼鏡斷開→關麥（不掉回手機麥）")
+            }
+        }
+    }
+
+    /// 真正開麥收音（只在偵測到眼鏡藍牙麥時呼叫）。
+    private func beginCapture(preferred: AVAudioSessionPortDescription) {
+        let s = AVAudioSession.sharedInstance()
+        do {
+            try s.setActive(true, options: [])
+            try? s.setPreferredInput(preferred)
             let input = engine.inputNode
             let fmt = input.outputFormat(forBus: 0)
             input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { [weak self] buf, _ in
@@ -71,39 +98,9 @@ final class AudioHub {
             engine.prepare()
             try engine.start()
             running = true
-            RemoteLog.send("audioHub: 開麥克風收音（聽的當下才開）")
-
-            guard !observersInstalled else { return }
-            observersInstalled = true
-            NotificationCenter.default.addObserver(
-                forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
-            ) { [weak self] note in
-                guard let self, let info = note.userInfo,
-                      let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
-                      AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
-                Task { @MainActor in self.resume() }
-            }
-            // 路由變（眼鏡連上/斷開）就重挑輸入麥，讓眼鏡一連上就自動切成眼鏡麥。
-            NotificationCenter.default.addObserver(
-                forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in self?.preferGlassesMic() }
-            }
+            RemoteLog.send("audioHub: 眼鏡藍牙麥常駐開啟 \(preferred.portName)（背景持續聽）")
         } catch {
-            RemoteLog.send("audioHub 啟動失敗: \(error)")
-        }
-    }
-
-    /// 有眼鏡藍牙麥就鎖眼鏡、沒有退手機麥（路由變時呼叫）。閒置不錄音時不動。
-    private func preferGlassesMic() {
-        guard running else { return }
-        let s = AVAudioSession.sharedInstance()
-        guard let ins = s.availableInputs else { return }
-        if let hfp = ins.first(where: { $0.portType == .bluetoothHFP }) {
-            try? s.setPreferredInput(hfp)
-            RemoteLog.send("audioHub: 路由變→切眼鏡藍牙麥 \(hfp.portName)")
-        } else if let builtIn = ins.first(where: { $0.portType == .builtInMic }) {
-            try? s.setPreferredInput(builtIn)
+            RemoteLog.send("audioHub 開眼鏡麥失敗: \(error)")
         }
     }
 
@@ -117,13 +114,16 @@ final class AudioHub {
         } catch { RemoteLog.send("audioHub resume 失敗: \(error)") }
     }
 
-    /// 聽一句話：當下才開麥（startAlwaysOn）→最多 maxSeconds 秒、自然停頓(isFinal)就提早收
-    /// →回最終繁中文字→stopEngine 關麥。⚠背景中呼叫會開麥＝iOS 可能掐死 app，要前景/眼鏡觸發。
+    /// 聽一句話：掛一條辨識請求到「眼鏡麥已在流動的 buffer」上，最多 maxSeconds 秒、
+    /// 自然停頓(isFinal)就提早收，回最終繁中文字。眼鏡沒連＝不開麥、直接回空（不掉回手機麥）。
     func listenOnce(maxSeconds: Int = 10) async -> String {
         if !authorized { await requestPermission() }
         guard authorized else { return "" }
-        if !running { startAlwaysOn() }
-        guard running, let recognizer, recognizer.isAvailable else { return "" }
+        if !running { syncToGlasses() }   // 眼鏡連著會開起來；沒連仍是 false
+        guard running, let recognizer, recognizer.isAvailable else {
+            RemoteLog.send("listenOnce: 眼鏡沒連上藍牙→沒開麥（戴上眼鏡+藍牙連線再試）")
+            return ""
+        }
 
         transcript = ""
         finished = false
@@ -152,7 +152,7 @@ final class AudioHub {
         let out = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         // 診斷：麥克風實收峰值音量＋當前用哪支麥＋辨識到的字，一次打回遙測
         RemoteLog.send("listenOnce 用\(which)(\(route)) 峰值=\(String(format: "%.3f", peakLevel)) 字=「\(out)」")
-        stopEngine()   // 聽完立刻關麥（董事長要：平常不錄音，橘點只在聽的當下亮）
+        // 不關麥——眼鏡常駐背景聽（董事長要）。眼鏡斷開時 syncToGlasses 才會關。
         return out
     }
 
