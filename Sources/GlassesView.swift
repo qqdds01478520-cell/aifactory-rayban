@@ -41,6 +41,19 @@ struct GlassesLiveView: View {
                 actionButton("① 綁定眼鏡（Meta AI 授權）", icon: "link") {
                     try await GlassesManager.shared.register()
                     log = "已送出綁定請求——手機會跳 Meta AI app，按同意後回來。"
+                    // 送出後盯 25 秒：等 Meta AI 回調把狀態翻成已綁定；沒翻＝老實報診斷
+                    for _ in 0..<50 {
+                        try await Task.sleep(nanoseconds: 500_000_000)
+                        if GlassesManager.shared.registered { break }
+                    }
+                    if GlassesManager.shared.registered {
+                        log = "綁定成功 ✅ 接著按②連線"
+                    } else {
+                        let err = GlassesManager.shared.lastError
+                        log = "同意後仍未綁定。可能：Meta AI 沒回跳本 app／眼鏡未在 Meta AI 連線／授權被 Meta 端拒絕。"
+                            + (err.isEmpty ? "" : "\n錯誤：\(err)")
+                        RemoteLog.send("bind watchdog: still unregistered after 25s, lastError=\(err.isEmpty ? "-" : err)")
+                    }
                 }
                 actionButton("② 連線眼鏡", icon: "antenna.radiowaves.left.and.right") {
                     try await GlassesManager.shared.connect()
@@ -104,7 +117,10 @@ struct GlassesLiveView: View {
             busy = true
             Task {
                 do { try await action() }
-                catch { log = "失敗：\(error.localizedDescription)（\(error)）" }
+                catch {
+                    log = "失敗：\(error.localizedDescription)（\(error)）"
+                    RemoteLog.send("GlassesView action FAIL: \(error)")
+                }
                 busy = false
             }
         } label: {

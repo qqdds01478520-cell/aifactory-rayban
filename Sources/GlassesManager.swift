@@ -37,32 +37,51 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         watching = true
         if selector == nil { selector = AutoDeviceSelector(wearables: Wearables.shared) }
         // 先讀「當下值」再聽流（官方樣本寫法）——流不重播現值，只聽流會漏掉已綁定狀態
-        registered = Wearables.shared.registrationState == .registered
+        let now = Wearables.shared.registrationState
+        registered = now == .registered
+        RemoteLog.send("watchState: registrationState=\(now)")
         Task { [weak self] in
             for await state in Wearables.shared.registrationStateStream() {
                 self?.registered = state == .registered
+                RemoteLog.send("registrationStateStream → \(state)")
             }
         }
         Task { [weak self] in
             guard let sel = self?.selector else { return }
             for await dev in sel.activeDeviceStream() {
                 self?.hasDevice = dev != nil
+                RemoteLog.send("activeDeviceStream → \(dev == nil ? "nil" : "device-online")")
             }
         }
     }
 
     static func configure() {
-        do { try Wearables.configure() }
-        catch { NSLog("Wearables.configure 失敗: \(error)") }
+        do { try Wearables.configure(); RemoteLog.send("Wearables.configure OK") }
+        catch {
+            NSLog("Wearables.configure 失敗: \(error)")
+            RemoteLog.send("Wearables.configure FAIL: \(error)")
+        }
     }
 
     func handleUrl(_ url: URL) async {
-        _ = try? await Wearables.shared.handleUrl(url)
+        let brief = "\(url.scheme ?? "")://\(url.host ?? "")\(url.path)"
+        do {
+            let handled = try await Wearables.shared.handleUrl(url)
+            RemoteLog.send("handleUrl \(brief) → handled=\(handled) state=\(Wearables.shared.registrationState)")
+        } catch {
+            lastError = "\(error)"
+            RemoteLog.send("handleUrl \(brief) → THROW: \(error)")
+        }
     }
 
     func register() async throws {
         watchState()
-        try await Wearables.shared.startRegistration()
+        RemoteLog.send("register(): startRegistration… state=\(Wearables.shared.registrationState)")
+        do { try await Wearables.shared.startRegistration() }
+        catch {
+            RemoteLog.send("startRegistration THROW: \(error)")
+            throw error
+        }
     }
 
     func connect() async throws {
@@ -141,7 +160,8 @@ final class GlassesManager: ObservableObject, CommandExecutor {
 
     func statusText() -> String {
         let s = session != nil ? "up" : "no-session"
-        return "session=\(s) display=\(display != nil) camera=\(camera != nil)"
+        return "reg=\(Wearables.shared.registrationState) device=\(hasDevice) session=\(s) "
+             + "display=\(display != nil) camera=\(camera != nil) lastError=\(lastError.isEmpty ? "-" : lastError)"
     }
 
     /// 聽一句話（最長 maxSeconds 秒；辨識器自然收尾就提早停），回最終文字。
