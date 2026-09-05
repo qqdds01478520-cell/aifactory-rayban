@@ -122,6 +122,15 @@ final class GlassesManager: ObservableObject, CommandExecutor {
             waited += 1
         }
         guard s.state == .started else { throw GlassesError.sessionTimeout("\(s.state)") }
+        // 眼鏡相機是獨立權限（綁定≠授權）：沒授權串流永遠 waitingForDevice→deviceNotConnected
+        let perm = try await Wearables.shared.checkPermissionStatus(.camera)
+        RemoteLog.send("camera permission = \(perm)")
+        if perm != .granted {
+            RemoteLog.send("requestPermission(.camera) → 跳 Meta AI…")
+            let res = try await Wearables.shared.requestPermission(.camera)
+            RemoteLog.send("camera permission after request = \(res)")
+            guard res == .granted else { throw GlassesError.cameraPermissionDenied }
+        }
         let d = try s.addDisplay()
         d.start()
         display = d
@@ -145,6 +154,8 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         }
         connected = true
         RemoteLog.send("connect OK: \(statusText())")
+        // 接管鏡片顯示後不能留白畫面（用戶會以為眼鏡被關掉）——連上就送歡迎卡
+        try? await showText(title: "克拉扣 OS", body: "已連線，隨時效勞")
     }
 
     func disconnect() {
@@ -320,6 +331,7 @@ enum GlassesError: LocalizedError {
     case photoTimeout
     case streamNotReady(String)
     case photoRejected
+    case cameraPermissionDenied
 
     var errorDescription: String? {
         switch self {
@@ -330,6 +342,7 @@ enum GlassesError: LocalizedError {
         case .photoTimeout: return "拍照 12 秒沒回應——眼鏡戴著再按一次③；連兩次沒反應就按②重連"
         case .streamNotReady(let s): return "鏡頭串流還沒就緒（\(s)）——等幾秒再按③；一直不行就按②重連"
         case .photoRejected: return "眼鏡拒收拍照指令——按②重連後再試③"
+        case .cameraPermissionDenied: return "相機權限沒開——按②會跳 Meta AI，請選「一律允許」再回來"
         }
     }
 }
