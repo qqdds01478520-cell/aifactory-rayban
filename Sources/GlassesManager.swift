@@ -323,21 +323,22 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         return speech.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 賈維斯 v2（2026-09-05 董事長「畫面一直被關」退件重做）：鏡片原生版。
-    /// 一條連線開到底：對話直接顯示在鏡片上（不再靠瀏覽器頁，畫面不會被搶）、
-    /// 聽寫＋每 10 秒視野照共用同一 session。鏡片上有「結束」鈕；安全上限 15 分鐘。
+    /// 賈維斯 v3（2026-09-05 董事長「賈維斯本來就該自動把我講話變中文字」）：純聽寫版。
+    /// 主業＝一開就自動聽你講話→即時轉繁中→(1)顯示在鏡片上 (2)傳給 COO→答案回鏡片。
+    /// 只開一條連線給鏡片顯示，全程不拍照（連拍會反覆重連、把 session 搶走害畫面一直關）。
+    /// 鏡片上有「結束」鈕；安全上限 15 分鐘。
     private func startJarvis() {
         guard !jarvisRunning else { return }
         jarvisRunning = true
         speech.keepAlive = true   // 背景保活：聽寫 session 全程不停用，配 audio 背景模式讓手機收口袋也能跑
         let relay = RelayClient(authKey: AppConfig.authKey)
         let started = Date()
-        RemoteLog.send("jarvis v2 start（背景保活開）")
-        Task { [weak self] in   // 主迴圈：連線＋鏡片畫面＋聽寫
+        RemoteLog.send("jarvis v3 start（純聽寫・背景保活開）")
+        Task { [weak self] in   // 唯一迴圈：連線＋鏡片畫面＋自動聽寫（無拍照，不搶 session）
             guard let self else { return }
             do {
                 try await self.ensureConnected()
-                await self.jarvisShow(status: "啟動", you: "我在聽，直接講話就好", ans: "（每 10 秒也會看一眼你的視野）")
+                await self.jarvisShow(status: "在聽了", you: "直接講話就好，我會把你的話變成字", ans: "")
             } catch {
                 RemoteLog.send("jarvis connect fail: \(error)")
                 self.jarvisRunning = false
@@ -348,7 +349,8 @@ final class GlassesManager: ObservableObject, CommandExecutor {
                 guard self.jarvisRunning else { break }
                 guard !heard.isEmpty else { continue }
                 RemoteLog.send("jarvis heard: \(heard)")
-                await self.jarvisShow(status: "想中…", you: heard, ans: "")
+                // 一聽到就立刻：鏡片顯示中文字 ＋ 把逐字稿傳給 COO
+                await self.jarvisShow(status: "聽到了", you: heard, ans: "想中…")
                 if let qid = try? await relay.askText("[賈維斯] " + heard),
                    let ans = await relay.pollAnswer(id: qid, timeout: 90), self.jarvisRunning {
                     let short = ans.count > 140 ? String(ans.prefix(140)) + "…" : ans
@@ -357,12 +359,6 @@ final class GlassesManager: ObservableObject, CommandExecutor {
             }
             self.jarvisRunning = false
             await self.jarvisCleanup()
-        }
-        Task { [weak self] in   // 視野迴圈（重用同一條連線，不再反覆開關）
-            while self?.jarvisRunning == true, Date().timeIntervalSince(started) < 900 {
-                if let data = try? await self?.capturePhoto() { _ = try? await relay.uploadPhoto(data) }
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-            }
         }
     }
 
