@@ -27,6 +27,7 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     private var display: Display?
     private var camera: Camera?
     private var tokens: [Any] = []       // listen 回傳的訂閱 token，要抓著不放
+    private var photoToken: Any?         // 拍照回調訂閱——區域變數會被提早釋放害回調永遠不來
     private var watching = false
     private let speech = SpeechRecognizer()
     private var jarvisRunning = false
@@ -124,6 +125,7 @@ final class GlassesManager: ObservableObject, CommandExecutor {
             camera = c
         }
         connected = true
+        RemoteLog.send("connect OK: \(statusText())")
     }
 
     func disconnect() {
@@ -145,17 +147,26 @@ final class GlassesManager: ObservableObject, CommandExecutor {
             .padding(24)
             .background(.card)
         )
+        RemoteLog.send("showText OK: \(title)")
     }
 
     func capturePhoto() async throws -> Data {
         guard let camera else { throw GlassesError.notConnected }
-        return try await withCheckedThrowingContinuation { cont in
-            let token = camera.stream.photoDataPublisher.listen { photo in
-                cont.resume(returning: photo.data)
+        RemoteLog.send("capturePhoto: request…")
+        let once = ResumeOnce()
+        defer { photoToken = nil }
+        let data: Data = try await withCheckedThrowingContinuation { cont in
+            photoToken = camera.stream.photoDataPublisher.listen { photo in
+                if once.claim() { cont.resume(returning: photo.data) }
             }
             camera.stream.capturePhoto(format: .jpeg)
-            _ = token
+            Task {   // 12 秒逾時保護：沒回調就丟錯，別讓 busy 卡死整排按鈕
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                if once.claim() { cont.resume(throwing: GlassesError.photoTimeout) }
+            }
         }
+        RemoteLog.send("capturePhoto: got \(data.count)B")
+        return data
     }
 
     func statusText() -> String {
@@ -254,11 +265,24 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     }
 }
 
+/// continuation 只准 resume 一次（回調 vs 逾時賽跑）
+final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
+    }
+}
+
 enum GlassesError: LocalizedError {
     case notConnected
     case notRegistered
     case noDeviceOnline
     case sessionTimeout(String)
+    case photoTimeout
 
     var errorDescription: String? {
         switch self {
@@ -266,6 +290,7 @@ enum GlassesError: LocalizedError {
         case .notRegistered: return "還沒綁定（先按①，跳 Meta AI 按同意）"
         case .noDeviceOnline: return "眼鏡不在線——確認眼鏡開機戴著、Meta AI app 顯示已連線，再按一次"
         case .sessionTimeout(let s): return "連線逾時（卡在 \(s)）——眼鏡收一下再展開重試"
+        case .photoTimeout: return "拍照 12 秒沒回應——眼鏡戴著再按一次③；連兩次沒反應就按②重連"
         }
     }
 }
