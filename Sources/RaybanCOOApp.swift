@@ -22,11 +22,10 @@ struct RaybanCOOApp: App {
                     await bridge.start()
                 }
                 .task {
-                    // 麥克風常駐：app 一開（前景）就開好麥克風並持續錄音，既佔住 audio 背景模式
-                    // 讓 app 永不凍結（遠端指令橋 24h 領得到單），又讓背景也聽得到講話、且不會被 iOS
-                    // 掐死（背景只是延續前景就開好的收音，不是重新開麥克風）。董事長「一開就常駐開麥克風」。
+                    // 董事長 2026-09-05：「點開 app 手機就背景錄音」要拿掉。改成不常駐、不自動錄音——
+                    // 只在真的下指令要聽的當下才開麥、聽完立刻關（listenOnce 內自行 start→stop）。
+                    // 這裡只預先要權限（避免第一次聽時才跳窗），絕不 startAlwaysOn。
                     await AudioHub.shared.requestPermission()
-                    AudioHub.shared.startAlwaysOn()
                     // 掛狀態監看；不開機自動拍照（會搶眼鏡畫面＋背景凍結留殭屍 session）
                     guard AppConfig.hasRelayKey else { return }
                     GlassesManager.shared.watchState()

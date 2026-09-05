@@ -1,13 +1,10 @@
 import AVFoundation
 import Speech
 
-/// 麥克風常駐中樞（董事長 2026-09-05：「一開就常駐把麥克風開著」）。
-/// 前一版錯在「app 退背景後才開麥克風」＝iOS 直接把 app 掐死。
-/// 正解：app 一啟動（前景）就開一條 AVAudioEngine 常駐錄音——
-///   ① 持續有麥克風輸入＝佔住 audio 背景模式，app 永不凍結
-///   ② 麥克風「常暖」，要辨識時只是掛一條辨識請求到「已經在流動的 buffer」上，
-///      不是在背景重新開麥克風，所以背景也聽得到、不會被掐死。
-/// 聽寫走 zh-TW；沒在辨識時 buffer 直接丟掉（麥克風照樣開著）。
+/// 麥克風收音中樞。董事長 2026-09-05：「點開 app 手機就背景錄音」要拿掉——
+/// 改成不常駐、不自動錄音：只有 listenOnce 要聽的當下才 startAlwaysOn 開麥、
+/// 聽完 stopEngine 立刻關（橘色麥克風點只在聽的那幾秒亮，平常完全不錄）。
+/// 收音來源：眼鏡藍牙 HFP 麥優先（眼鏡連上時），否則退手機內建麥。聽寫走 zh-TW。
 @MainActor
 final class AudioHub {
     static let shared = AudioHub()
@@ -18,6 +15,7 @@ final class AudioHub {
     private var task: SFSpeechRecognitionTask?
     private var running = false
     private var finished = false
+    private var observersInstalled = false
     private var metering = false
     private var peakLevel: Float = 0   // 聽寫期間麥克風實際收到的最大音量（診斷用）
 
@@ -34,7 +32,8 @@ final class AudioHub {
         authorized = sp && mic
     }
 
-    /// 啟動時（前景）呼叫一次：常駐開麥克風。
+    /// 開麥克風收音（只在 listenOnce 要聽的當下呼叫；聽完 stopEngine 關掉）。
+    /// 不再開機常駐——董事長 2026-09-05 要求平常不錄音。
     func startAlwaysOn() {
         guard !running else { return }
         do {
@@ -61,7 +60,7 @@ final class AudioHub {
             let fmt = input.outputFormat(forBus: 0)
             input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { [weak self] buf, _ in
                 guard let self else { return }
-                self.request?.append(buf)   // 有辨識請求就餵、沒有就丟；麥克風一路開著
+                self.request?.append(buf)   // 有辨識請求就餵給辨識器
                 if self.metering, let ch = buf.floatChannelData?[0] {
                     var mx: Float = 0
                     let n = Int(buf.frameLength)
@@ -72,8 +71,10 @@ final class AudioHub {
             engine.prepare()
             try engine.start()
             running = true
-            RemoteLog.send("audioHub: 麥克風常駐開啟（前景啟動，背景延續聽得到）")
+            RemoteLog.send("audioHub: 開麥克風收音（聽的當下才開）")
 
+            guard !observersInstalled else { return }
+            observersInstalled = true
             NotificationCenter.default.addObserver(
                 forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
             ) { [weak self] note in
@@ -93,8 +94,9 @@ final class AudioHub {
         }
     }
 
-    /// 有眼鏡藍牙麥就鎖眼鏡、沒有退手機麥（路由變時呼叫）。
+    /// 有眼鏡藍牙麥就鎖眼鏡、沒有退手機麥（路由變時呼叫）。閒置不錄音時不動。
     private func preferGlassesMic() {
+        guard running else { return }
         let s = AVAudioSession.sharedInstance()
         guard let ins = s.availableInputs else { return }
         if let hfp = ins.first(where: { $0.portType == .bluetoothHFP }) {
@@ -106,6 +108,7 @@ final class AudioHub {
     }
 
     private func resume() {
+        guard running else { return }   // 閒置（沒在聽）就不自動復活麥克風
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: [])
             if !engine.isRunning { try engine.start() }
@@ -114,8 +117,8 @@ final class AudioHub {
         } catch { RemoteLog.send("audioHub resume 失敗: \(error)") }
     }
 
-    /// 聽一句話：最多 maxSeconds 秒，自然停頓（isFinal）就提早收，回最終繁中文字。
-    /// 引擎早在前景開好、不重開——所以背景呼叫也 OK，不會被 iOS 掐死。
+    /// 聽一句話：當下才開麥（startAlwaysOn）→最多 maxSeconds 秒、自然停頓(isFinal)就提早收
+    /// →回最終繁中文字→stopEngine 關麥。⚠背景中呼叫會開麥＝iOS 可能掐死 app，要前景/眼鏡觸發。
     func listenOnce(maxSeconds: Int = 10) async -> String {
         if !authorized { await requestPermission() }
         guard authorized else { return "" }
@@ -141,7 +144,7 @@ final class AudioHub {
         req.endAudio()
         task?.cancel()
         task = nil
-        request = nil   // 停止餵 buffer（麥克風＋引擎仍常駐）
+        request = nil
         metering = false
         let inPort = AVAudioSession.sharedInstance().currentRoute.inputs.first
         let route = inPort?.portName ?? "無"
@@ -149,6 +152,17 @@ final class AudioHub {
         let out = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         // 診斷：麥克風實收峰值音量＋當前用哪支麥＋辨識到的字，一次打回遙測
         RemoteLog.send("listenOnce 用\(which)(\(route)) 峰值=\(String(format: "%.3f", peakLevel)) 字=「\(out)」")
+        stopEngine()   // 聽完立刻關麥（董事長要：平常不錄音，橘點只在聽的當下亮）
         return out
+    }
+
+    /// 關掉麥克風引擎＋放掉 audio session，回到「完全不錄音」狀態。
+    private func stopEngine() {
+        guard running else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        running = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        RemoteLog.send("audioHub: 已關麥克風（回到不錄音）")
     }
 }
