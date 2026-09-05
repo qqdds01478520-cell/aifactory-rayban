@@ -158,22 +158,28 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         tokens.append(s.errorPublisher.listen { [weak self] err in
             Task { @MainActor in self?.lastError = "\(err)" }
         })
-        try s.start()
-        // 3) 等 .started（最多 15 秒）才掛能力
-        waited = 0
-        while s.state != .started && waited < 60 {
-            try await Task.sleep(nanoseconds: 250_000_000)
-            waited += 1
-        }
-        guard s.state == .started else { throw GlassesError.sessionTimeout("\(s.state)") }
-        // 眼鏡相機是獨立權限（綁定≠授權）：沒授權串流永遠 waitingForDevice→deviceNotConnected
-        let perm = try await Wearables.shared.checkPermissionStatus(.camera)
-        RemoteLog.send("camera permission = \(perm)")
-        if perm != .granted {
-            RemoteLog.send("requestPermission(.camera) → 跳 Meta AI…")
-            let res = try await Wearables.shared.requestPermission(.camera)
-            RemoteLog.send("camera permission after request = \(res)")
-            guard res == .granted else { throw GlassesError.cameraPermissionDenied }
+        // 任何一步失敗都先 disconnect 清掉半開的殭屍 session，避免佔死眼鏡端（iOS 背景凍結後的元兇）
+        do {
+            try s.start()
+            // 3) 等 .started（最多 15 秒）才掛能力
+            waited = 0
+            while s.state != .started && waited < 60 {
+                try await Task.sleep(nanoseconds: 250_000_000)
+                waited += 1
+            }
+            guard s.state == .started else { throw GlassesError.sessionTimeout("\(s.state)") }
+            // 眼鏡相機是獨立權限（綁定≠授權）：沒授權串流永遠 waitingForDevice→deviceNotConnected
+            let perm = try await Wearables.shared.checkPermissionStatus(.camera)
+            RemoteLog.send("camera permission = \(perm)")
+            if perm != .granted {
+                RemoteLog.send("requestPermission(.camera) → 跳 Meta AI…")
+                let res = try await Wearables.shared.requestPermission(.camera)
+                RemoteLog.send("camera permission after request = \(res)")
+                guard res == .granted else { throw GlassesError.cameraPermissionDenied }
+            }
+        } catch {
+            disconnect()   // 清殭屍 session，讓下次連線是全新的
+            throw error
         }
         // 不在連線時 addDisplay——接管鏡片會蓋掉眼鏡原生畫面（董事長 9/5：畫面要獨立分開）。
         // 顯示改成 showText 用時才掛、幾秒後自動釋放還原。
@@ -323,9 +329,10 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     private func startJarvis() {
         guard !jarvisRunning else { return }
         jarvisRunning = true
+        speech.keepAlive = true   // 背景保活：聽寫 session 全程不停用，配 audio 背景模式讓手機收口袋也能跑
         let relay = RelayClient(authKey: AppConfig.authKey)
         let started = Date()
-        RemoteLog.send("jarvis v2 start")
+        RemoteLog.send("jarvis v2 start（背景保活開）")
         Task { [weak self] in   // 主迴圈：連線＋鏡片畫面＋聽寫
             guard let self else { return }
             do {
@@ -400,12 +407,14 @@ final class GlassesManager: ObservableObject, CommandExecutor {
 
     /// 賈維斯收尾：鏡片顯示結束卡→釋放顯示＋斷線還原眼鏡畫面
     private func jarvisCleanup() async {
+        speech.keepAlive = false
+        speech.stop()   // 真正停用 audio session、釋放背景保活
         await jarvisShow(status: "已結束", you: "", ans: "畫面即將還原")
         try? await Task.sleep(nanoseconds: 1_500_000_000)
         display?.stop()
         display = nil; displayToken = nil; displayState = nil
         disconnect()
-        RemoteLog.send("jarvis v2 stopped，畫面已還原")
+        RemoteLog.send("jarvis v2 stopped，畫面已還原（背景保活關）")
     }
 
     /// 開機自動自測（董事長「你自己測」令）：綁定過就自動跑一次完整拍照鏈，

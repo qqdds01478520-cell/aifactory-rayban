@@ -22,11 +22,9 @@ struct RaybanCOOApp: App {
                     await bridge.start()
                 }
                 .task {
-                    // 開機自動自測：已綁定就自動跑一次拍照鏈，結果走遙測回報
+                    // 只掛狀態監看；不再開機自動拍照（會搶眼鏡畫面＋背景凍結留殭屍 session）
                     guard AppConfig.hasRelayKey else { return }
                     GlassesManager.shared.watchState()
-                    try? await Task.sleep(nanoseconds: 4_000_000_000)
-                    await GlassesManager.shared.autoSelfTest()
                 }
                 #endif
         }

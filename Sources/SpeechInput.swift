@@ -9,6 +9,8 @@ final class SpeechRecognizer: ObservableObject {
     @Published var transcript = ""
     @Published var isListening = false
     @Published var authorized = false
+    /// 賈維斯背景保活：true 時聽寫間隙不停用 audio session，配 audio 背景模式讓 app 背景常駐
+    var keepAlive = false
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh_TW"))
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -30,7 +32,8 @@ final class SpeechRecognizer: ObservableObject {
         guard !isListening, let recognizer, recognizer.isAvailable else { return }
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .allowBluetooth])
+            // .mixWithOthers＝背景 audio 與系統共存（保活不搶佔）；賈維斯用得上
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .allowBluetooth, .mixWithOthers])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
 
             let req = SFSpeechAudioBufferRecognitionRequest()
@@ -68,7 +71,10 @@ final class SpeechRecognizer: ObservableObject {
         task?.cancel()
         request = nil; task = nil
         isListening = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // 賈維斯保活期間不停用 session，否則背景會被凍結（聽寫間隙也算）
+        if !keepAlive {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 }
 
