@@ -3,6 +3,7 @@
 // 確保雲端模擬器一定編得出畫面截圖；第二批把 MWDAT 加回 project.yml 即自動啟用。
 #if canImport(MWDATCore)
 import Foundation
+import Network
 import MWDATCore
 import MWDATCamera
 import MWDATDisplay
@@ -112,9 +113,27 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         }
     }
 
+    private var lnBrowser: NWBrowser?
+
+    /// 主動戳一下 Bonjour 掃描，逼 iOS 跳「區域網路」詢問（影像走 Wi-Fi 直連，
+    /// 這權限沒開＝串流永遠 waitingForDevice；詢問一生只跳一次，被略過就得靠這招補問）
+    private func triggerLocalNetworkPrompt() {
+        guard lnBrowser == nil else { return }
+        let b = NWBrowser(for: .bonjour(type: "_bonjour._tcp", domain: nil), using: .init())
+        b.stateUpdateHandler = { st in RemoteLog.send("localNetwork browse state: \(st)") }
+        b.start(queue: .main)
+        lnBrowser = b
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            self?.lnBrowser?.cancel()
+            self?.lnBrowser = nil
+        }
+    }
+
     func connect() async throws {
         lastError = ""
         watchState()
+        triggerLocalNetworkPrompt()
         guard registered else { throw GlassesError.notRegistered }
         // 1) 等眼鏡在線（最多 12 秒；watchState 的裝置流會把 hasDevice 翻 true）
         var waited = 0
