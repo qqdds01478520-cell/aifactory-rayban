@@ -33,7 +33,6 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     private var displayState: DisplayState?   // 官方要求：send 前必等 .started
     private var streamState: StreamState = .stopped   // 拍照前置條件：必須 .streaming（官方 sample 鐵則）
     private var watching = false
-    private let speech = SpeechRecognizer()
     private var jarvisRunning = false
 
     /// 開機就盯註冊狀態流＋裝置偵測流，反映到 UI。（冪等，可重複呼叫）
@@ -324,18 +323,9 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     }
 
     /// 聽一句話（最長 maxSeconds 秒；辨識器自然收尾就提早停），回最終文字。
-    /// 眼鏡連著時 iOS 會走藍牙麥克風＝眼鏡收音。
+    /// 走 AudioHub 常駐麥克風——引擎前景就開好，這裡只掛辨識請求，背景也聽得到、不掐死。
     func listenOnce(maxSeconds: Int = 7) async -> String {
-        if !speech.authorized { await speech.requestPermission() }
-        guard speech.authorized else { return "" }
-        speech.transcript = ""
-        speech.start { _ in }
-        for _ in 0..<(maxSeconds * 4) {
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            if !speech.isListening { break }
-        }
-        speech.stop()
-        return speech.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        return await AudioHub.shared.listenOnce(maxSeconds: maxSeconds)
     }
 
     /// 賈維斯 v3（2026-09-05 董事長「賈維斯本來就該自動把我講話變中文字」）：純聽寫版。
@@ -345,10 +335,10 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     private func startJarvis() {
         guard !jarvisRunning else { return }
         jarvisRunning = true
-        speech.keepAlive = true   // 背景保活：聽寫 session 全程不停用，配 audio 背景模式讓手機收口袋也能跑
+        // 麥克風已由 AudioHub 常駐開著（前景啟動），背景也聽得到——不需要在這裡管 audio session
         let relay = RelayClient(authKey: AppConfig.authKey)
         let started = Date()
-        RemoteLog.send("jarvis v3 start（純聽寫・背景保活開）")
+        RemoteLog.send("jarvis v4 start（AudioHub 常駐麥克風・背景可聽）")
         Task { [weak self] in   // 唯一迴圈：連線＋鏡片畫面＋自動聽寫（無拍照，不搶 session）
             guard let self else { return }
             do {
@@ -418,8 +408,7 @@ final class GlassesManager: ObservableObject, CommandExecutor {
 
     /// 賈維斯收尾：鏡片顯示結束卡→釋放顯示＋斷線還原眼鏡畫面
     private func jarvisCleanup() async {
-        speech.keepAlive = false
-        speech.stop()   // 真正停用 audio session、釋放背景保活
+        // 麥克風常駐不關（AudioHub 全程開著）；只收鏡片顯示＋斷眼鏡連線
         await jarvisShow(status: "已結束", you: "", ans: "畫面即將還原")
         try? await Task.sleep(nanoseconds: 1_500_000_000)
         display?.stop()
