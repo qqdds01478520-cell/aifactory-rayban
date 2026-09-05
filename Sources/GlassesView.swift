@@ -60,9 +60,10 @@ struct GlassesLiveView: View {
                         RemoteLog.send("bind watchdog: still unregistered after 25s, lastError=\(err.isEmpty ? "-" : err)")
                     }
                 }
-                actionButton("② 連線眼鏡", icon: "antenna.radiowaves.left.and.right") {
+                actionButton("② 連線測試（測完自動斷開）", icon: "antenna.radiowaves.left.and.right") {
                     try await GlassesManager.shared.connect()
-                    log = "已連線 ✅ " + GlassesManager.shared.statusText()
+                    log = "連線測試成功 ✅ 之後③④按了會自動連線、做完自動斷開——眼鏡畫面只會熄那幾秒，其他時間正常。"
+                    GlassesManager.shared.scheduleAutoDisconnect(after: 3)
                 }
                 actionButton("③ 眼鏡拍一張（鏡頭實測）", icon: "camera.fill") {
                     let data = try await GlassesManager.shared.capturePhoto()
@@ -102,8 +103,8 @@ struct GlassesLiveView: View {
             Image(systemName: "eyeglasses").font(.system(size: 30)).foregroundStyle(Theme.glasses)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Ray-Ban Display").font(Theme.title(16)).foregroundStyle(Theme.ink(scheme))
-                Text(gm.connected ? "已連線・鏡頭與鏡片可用"
-                     : gm.registered ? "已綁定・尚未連線" : "未綁定")
+                Text(gm.connected ? "連線中（動作進行中）"
+                     : gm.registered ? "已綁定・待命中（用時自動連線）" : "未綁定")
                     .font(Theme.body(12))
                     .foregroundStyle(gm.connected ? Theme.maps : Theme.inkDim(scheme))
             }

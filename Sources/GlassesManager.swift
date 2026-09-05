@@ -91,6 +91,27 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         }
     }
 
+    private var releaseGen = 0   // 自動斷線世代碼：新動作進來就取消舊的斷線排程
+
+    /// 已連就直接用，沒連就連——③④「用時才連」的入口
+    func ensureConnected() async throws {
+        if connected, let s = session, s.state == .started { return }
+        try await connect()
+    }
+
+    /// 動作完成後 N 秒自動斷線，把眼鏡畫面還給原生系統（SDK session 期間眼鏡 HUD 會被熄掉，
+    /// 董事長 9/5 直令處理——唯一繞法＝不長掛連線）。賈維斯模式運作中不斷。
+    func scheduleAutoDisconnect(after seconds: UInt64 = 8) {
+        releaseGen += 1
+        let gen = releaseGen
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            guard let self, self.releaseGen == gen, !self.jarvisRunning else { return }
+            self.disconnect()
+            RemoteLog.send("session released (auto) — 眼鏡畫面已還原")
+        }
+    }
+
     func connect() async throws {
         lastError = ""
         watchState()
@@ -168,6 +189,8 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     private var displayGen = 0   // 自動釋放用世代碼：新內容進來就取消舊的還原排程
 
     func showText(title: String, body: String) async throws {
+        try await ensureConnected()
+        defer { scheduleAutoDisconnect(after: 13) }   // 比顯示釋放（10秒）晚一點再斷線
         guard let s = session, s.state == .started else { throw GlassesError.notConnected }
         if display == nil {
             let d = try s.addDisplay()
@@ -196,6 +219,8 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     }
 
     func capturePhoto() async throws -> Data {
+        try await ensureConnected()
+        defer { scheduleAutoDisconnect(after: 8) }
         guard let camera else { throw GlassesError.notConnected }
         // 等串流真正進 .streaming（最多 10 秒）——沒到就拍，SDK 直接回 false 沒回調
         var waited = 0
