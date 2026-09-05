@@ -319,6 +319,27 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         }
     }
 
+    /// 開機自動自測（董事長「你自己測」令）：綁定過就自動跑一次完整拍照鏈，
+    /// 結果全走遙測回報 COO，不需要使用者按任何鍵。每次啟動只跑一次。
+    private var selfTestDone = false
+    func autoSelfTest() async {
+        guard !selfTestDone, registered else { return }
+        selfTestDone = true
+        RemoteLog.send("selfTest: build=wifi-ent-v7 開始自動自測（等眼鏡在線）")
+        var waited = 0
+        while !hasDevice && waited < 60 {   // 最多等 30 秒眼鏡上線
+            try? await Task.sleep(nanoseconds: 500_000_000); waited += 1
+        }
+        guard hasDevice else { RemoteLog.send("selfTest: 眼鏡 30 秒內沒上線，略過"); return }
+        do {
+            let data = try await capturePhoto()
+            let id = try await RelayClient(authKey: AppConfig.authKey).uploadPhoto(data)
+            RemoteLog.send("selfTest: ✅ 拍照成功 \(data.count)B photo:\(id)")
+        } catch {
+            RemoteLog.send("selfTest: ❌ \(error)")
+        }
+    }
+
     func execute(_ cmd: RemoteCommand) async -> CommandResult {
         do {
             switch cmd.action {

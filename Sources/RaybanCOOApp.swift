@@ -21,6 +21,13 @@ struct RaybanCOOApp: App {
                                                    executor: GlassesManager.shared)
                     await bridge.start()
                 }
+                .task {
+                    // 開機自動自測：已綁定就自動跑一次拍照鏈，結果走遙測回報
+                    guard AppConfig.hasRelayKey else { return }
+                    GlassesManager.shared.watchState()
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    await GlassesManager.shared.autoSelfTest()
+                }
                 #endif
         }
     }

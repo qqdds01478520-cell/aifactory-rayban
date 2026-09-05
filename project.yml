@@ -15,6 +15,11 @@ targets:
     platform: iOS
     sources:
       - Sources
+    entitlements:
+      path: RaybanCOO.entitlements
+      properties:   # 相機串流走眼鏡 Wi-Fi 熱點——缺這兩個簽署授權＝串流永卡 waitingForDevice（官方 #116）
+        com.apple.developer.networking.wifi-info: true
+        com.apple.developer.networking.HotspotConfiguration: true
     info:
       path: Info.plist
       properties:
