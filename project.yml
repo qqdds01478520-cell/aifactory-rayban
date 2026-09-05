@@ -24,14 +24,19 @@ targets:
         NSMicrophoneUsageDescription: 用來聽你講話做語音輸入
         NSSpeechRecognitionUsageDescription: 把你的話轉成中文字
         NSBluetoothAlwaysUsageDescription: 連線眼鏡與藍牙音訊
+        NSLocalNetworkUsageDescription: 讓手機透過 Wi-Fi 找到並連線眼鏡
+        NSBonjourServices: [_bonjour._tcp]
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         RelayAuthKey: $(RELAY_AUTH_KEY)
         CFBundleURLTypes:
           - CFBundleURLSchemes: [raybancoo]
+        LSApplicationQueriesSchemes: [fb-viewapp]   # 官方要求：canOpenURL 白名單，SDK 靠它偵測並打開 Meta AI（缺了=註冊靜默失敗）
+        UIBackgroundModes: [processing, bluetooth-central, bluetooth-peripheral]
+        UISupportedExternalAccessoryProtocols: [com.meta.ar.wearable]
         MWDAT:
           MetaAppID: "0"            # 開發者模式（眼鏡端已開）免 Developer Center 註冊
-          AppLinkURLScheme: raybancoo
+          AppLinkURLScheme: "raybancoo://"   # 官方 sample 格式=含 :// 後綴
           TeamID: 8WZH7F644Z
     dependencies:
       - package: MWDAT
