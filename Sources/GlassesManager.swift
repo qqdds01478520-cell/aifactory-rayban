@@ -317,27 +317,95 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         return speech.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 賈維斯模式：持續聽寫逐段傳克拉扣＋每 10 秒眼鏡拍一張上傳（＝克拉扣的視野）。
-    /// 安全上限 15 分鐘自動停，網頁離開也會下 jarvis_stop。
+    /// 賈維斯 v2（2026-09-05 董事長「畫面一直被關」退件重做）：鏡片原生版。
+    /// 一條連線開到底：對話直接顯示在鏡片上（不再靠瀏覽器頁，畫面不會被搶）、
+    /// 聽寫＋每 10 秒視野照共用同一 session。鏡片上有「結束」鈕；安全上限 15 分鐘。
     private func startJarvis() {
         guard !jarvisRunning else { return }
         jarvisRunning = true
         let relay = RelayClient(authKey: AppConfig.authKey)
         let started = Date()
-        Task { [weak self] in   // 聽寫迴圈
-            while self?.jarvisRunning == true, Date().timeIntervalSince(started) < 900 {
-                guard let self else { break }
-                let heard = await self.listenOnce(maxSeconds: 10)
-                if !heard.isEmpty, self.jarvisRunning { _ = try? await relay.askText("[賈維斯] " + heard) }
+        RemoteLog.send("jarvis v2 start")
+        Task { [weak self] in   // 主迴圈：連線＋鏡片畫面＋聽寫
+            guard let self else { return }
+            do {
+                try await self.ensureConnected()
+                await self.jarvisShow(status: "啟動", you: "我在聽，直接講話就好", ans: "（每 10 秒也會看一眼你的視野）")
+            } catch {
+                RemoteLog.send("jarvis connect fail: \(error)")
+                self.jarvisRunning = false
+                return
             }
-            self?.jarvisRunning = false
+            while self.jarvisRunning, Date().timeIntervalSince(started) < 900 {
+                let heard = await self.listenOnce(maxSeconds: 10)
+                guard self.jarvisRunning else { break }
+                guard !heard.isEmpty else { continue }
+                RemoteLog.send("jarvis heard: \(heard)")
+                await self.jarvisShow(status: "想中…", you: heard, ans: "")
+                if let qid = try? await relay.askText("[賈維斯] " + heard),
+                   let ans = await relay.pollAnswer(id: qid, timeout: 90), self.jarvisRunning {
+                    let short = ans.count > 140 ? String(ans.prefix(140)) + "…" : ans
+                    await self.jarvisShow(status: "答", you: heard, ans: short)
+                }
+            }
+            self.jarvisRunning = false
+            await self.jarvisCleanup()
         }
-        Task { [weak self] in   // 視野迴圈
+        Task { [weak self] in   // 視野迴圈（重用同一條連線，不再反覆開關）
             while self?.jarvisRunning == true, Date().timeIntervalSince(started) < 900 {
                 if let data = try? await self?.capturePhoto() { _ = try? await relay.uploadPhoto(data) }
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
             }
         }
+    }
+
+    /// 賈維斯鏡片畫面（持續連線版：不排自動釋放；含結束鈕）
+    private func jarvisShow(status: String, you: String, ans: String) async {
+        do {
+            guard let s = session, s.state == .started else { return }
+            if display == nil {
+                let d = try s.addDisplay()
+                displayState = nil
+                displayToken = d.statePublisher.listen { [weak self] st in
+                    Task { @MainActor in self?.displayState = st }
+                }
+                d.start()
+                display = d
+            }
+            var w = 0
+            while displayState != .started && w < 32 {
+                try await Task.sleep(nanoseconds: 250_000_000)
+                w += 1
+            }
+            guard displayState == .started, let display else {
+                RemoteLog.send("jarvisShow: display not ready (\(String(describing: displayState)))")
+                return
+            }
+            try await display.send(
+                FlexBox(direction: .column, spacing: 8) {
+                    Text("✦ 賈維斯・" + status, style: .heading)
+                    if !you.isEmpty { Text("你：" + you, style: .body, color: .secondary) }
+                    if !ans.isEmpty { Text(ans, style: .body) }
+                    ButtonGroup {
+                        Button(label: "結束賈維斯", onClick: { [weak self] in
+                            Task { @MainActor in self?.jarvisRunning = false }
+                        })
+                    }
+                }
+                .padding(20)
+                .background(.card)
+            )
+        } catch { RemoteLog.send("jarvisShow fail: \(error)") }
+    }
+
+    /// 賈維斯收尾：鏡片顯示結束卡→釋放顯示＋斷線還原眼鏡畫面
+    private func jarvisCleanup() async {
+        await jarvisShow(status: "已結束", you: "", ans: "畫面即將還原")
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        display?.stop()
+        display = nil; displayToken = nil; displayState = nil
+        disconnect()
+        RemoteLog.send("jarvis v2 stopped，畫面已還原")
     }
 
     /// 開機自動自測（董事長「你自己測」令）：綁定過就自動跑一次完整拍照鏈，
