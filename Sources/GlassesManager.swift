@@ -131,9 +131,8 @@ final class GlassesManager: ObservableObject, CommandExecutor {
             RemoteLog.send("camera permission after request = \(res)")
             guard res == .granted else { throw GlassesError.cameraPermissionDenied }
         }
-        let d = try s.addDisplay()
-        d.start()
-        display = d
+        // 不在連線時 addDisplay——接管鏡片會蓋掉眼鏡原生畫面（董事長 9/5：畫面要獨立分開）。
+        // 顯示改成 showText 用時才掛、幾秒後自動釋放還原。
         let cfg = StreamConfiguration(videoCodec: .hvc1, resolution: .medium, frameRate: 24)
         if let c = try s.addCamera(config: cfg) {
             // 先訂狀態再 start（官方 sample）；拍照鐵則＝要等 .streaming
@@ -154,8 +153,6 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         }
         connected = true
         RemoteLog.send("connect OK: \(statusText())")
-        // 接管鏡片顯示後不能留白畫面（用戶會以為眼鏡被關掉）——連上就送歡迎卡
-        try? await showText(title: "克拉扣 OS", body: "已連線，隨時效勞")
     }
 
     func disconnect() {
@@ -168,7 +165,15 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         connected = false
     }
 
+    private var displayGen = 0   // 自動釋放用世代碼：新內容進來就取消舊的還原排程
+
     func showText(title: String, body: String) async throws {
+        guard let s = session, s.state == .started else { throw GlassesError.notConnected }
+        if display == nil {
+            let d = try s.addDisplay()
+            d.start()
+            display = d
+        }
         guard let display else { throw GlassesError.notConnected }
         try await display.send(
             FlexBox(direction: .column, spacing: 10) {
@@ -179,6 +184,15 @@ final class GlassesManager: ObservableObject, CommandExecutor {
             .background(.card)
         )
         RemoteLog.send("showText OK: \(title)")
+        displayGen += 1
+        let gen = displayGen
+        Task { [weak self] in   // 10 秒後自動釋放顯示，把鏡片還給眼鏡原生畫面
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard let self, self.displayGen == gen else { return }
+            self.display?.stop()
+            self.display = nil
+            RemoteLog.send("display released (auto)")
+        }
     }
 
     func capturePhoto() async throws -> Data {
