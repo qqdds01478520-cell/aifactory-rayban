@@ -28,6 +28,7 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     private var camera: Camera?
     private var tokens: [Any] = []       // listen 回傳的訂閱 token，要抓著不放
     private var photoToken: Any?         // 拍照回調訂閱——區域變數會被提早釋放害回調永遠不來
+    private var streamState: StreamState = .stopped   // 拍照前置條件：必須 .streaming（官方 sample 鐵則）
     private var watching = false
     private let speech = SpeechRecognizer()
     private var jarvisRunning = false
@@ -77,6 +78,11 @@ final class GlassesManager: ObservableObject, CommandExecutor {
 
     func register() async throws {
         watchState()
+        if Wearables.shared.registrationState == .registered {
+            RemoteLog.send("register(): already registered, skip")
+            registered = true
+            return   // 已綁定重按①＝直接成功，別再叫 SDK（會丟 RegistrationError）
+        }
         RemoteLog.send("register(): startRegistration… state=\(Wearables.shared.registrationState)")
         do { try await Wearables.shared.startRegistration() }
         catch {
@@ -121,6 +127,19 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         display = d
         let cfg = StreamConfiguration(videoCodec: .hvc1, resolution: .medium, frameRate: 24)
         if let c = try s.addCamera(config: cfg) {
+            // 先訂狀態再 start（官方 sample）；拍照鐵則＝要等 .streaming
+            tokens.append(c.stream.statePublisher.listen { [weak self] st in
+                Task { @MainActor in
+                    self?.streamState = st
+                    RemoteLog.send("streamState → \(st)")
+                }
+            })
+            tokens.append(c.stream.errorPublisher.listen { [weak self] err in
+                Task { @MainActor in
+                    self?.lastError = "\(err)"
+                    RemoteLog.send("streamError → \(err)")
+                }
+            })
             c.stream.start()
             camera = c
         }
@@ -134,6 +153,7 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         session?.stop()
         camera = nil; display = nil; session = nil
         tokens.removeAll()
+        streamState = .stopped
         connected = false
     }
 
@@ -152,6 +172,16 @@ final class GlassesManager: ObservableObject, CommandExecutor {
 
     func capturePhoto() async throws -> Data {
         guard let camera else { throw GlassesError.notConnected }
+        // 等串流真正進 .streaming（最多 10 秒）——沒到就拍，SDK 直接回 false 沒回調
+        var waited = 0
+        while streamState != .streaming && waited < 40 {
+            try await Task.sleep(nanoseconds: 250_000_000)
+            waited += 1
+        }
+        guard streamState == .streaming else {
+            RemoteLog.send("capturePhoto: stream not streaming (\(streamState))")
+            throw GlassesError.streamNotReady("\(streamState)")
+        }
         RemoteLog.send("capturePhoto: request…")
         let once = ResumeOnce()
         defer { photoToken = nil }
@@ -159,7 +189,12 @@ final class GlassesManager: ObservableObject, CommandExecutor {
             photoToken = camera.stream.photoDataPublisher.listen { photo in
                 if once.claim() { cont.resume(returning: photo.data) }
             }
-            camera.stream.capturePhoto(format: .jpeg)
+            let accepted = camera.stream.capturePhoto(format: .jpeg)
+            RemoteLog.send("capturePhoto: accepted=\(accepted)")
+            if !accepted {
+                if once.claim() { cont.resume(throwing: GlassesError.photoRejected) }
+                return
+            }
             Task {   // 12 秒逾時保護：沒回調就丟錯，別讓 busy 卡死整排按鈕
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
                 if once.claim() { cont.resume(throwing: GlassesError.photoTimeout) }
@@ -283,6 +318,8 @@ enum GlassesError: LocalizedError {
     case noDeviceOnline
     case sessionTimeout(String)
     case photoTimeout
+    case streamNotReady(String)
+    case photoRejected
 
     var errorDescription: String? {
         switch self {
@@ -291,6 +328,8 @@ enum GlassesError: LocalizedError {
         case .noDeviceOnline: return "眼鏡不在線——確認眼鏡開機戴著、Meta AI app 顯示已連線，再按一次"
         case .sessionTimeout(let s): return "連線逾時（卡在 \(s)）——眼鏡收一下再展開重試"
         case .photoTimeout: return "拍照 12 秒沒回應——眼鏡戴著再按一次③；連兩次沒反應就按②重連"
+        case .streamNotReady(let s): return "鏡頭串流還沒就緒（\(s)）——等幾秒再按③；一直不行就按②重連"
+        case .photoRejected: return "眼鏡拒收拍照指令——按②重連後再試③"
         }
     }
 }
