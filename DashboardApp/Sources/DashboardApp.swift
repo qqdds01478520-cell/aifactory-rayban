@@ -1,12 +1,47 @@
 import SwiftUI
 import WebKit
+import UserNotifications
 
 let DASHBOARD_URL = URL(string: "https://aifactory-dashboard.tail825b5f.ts.net")!
+let RELAY_BASE = "https://rayban-relay.goingtosheon.workers.dev"
 
 @main
 struct AIFactoryDashboardApp: App {
+    @UIApplicationDelegateAdaptor(PushDelegate.self) var pushDelegate
     var body: some Scene {
         WindowGroup { ContentView() }
+    }
+}
+
+final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    func application(_ app: UIApplication,
+                     didFinishLaunchingWithOptions opts: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
+            if granted { DispatchQueue.main.async { app.registerForRemoteNotifications() } }
+        }
+        return true
+    }
+
+    func application(_ app: UIApplication,
+                     didRegisterForRemoteNotificationsWithDeviceToken token: Data) {
+        let hex = token.map { String(format: "%02x", $0) }.joined()
+        let key = (Bundle.main.object(forInfoDictionaryKey: "RelayAuthKey") as? String) ?? ""
+        guard var comps = URLComponents(string: RELAY_BASE + "/dash-token") else { return }
+        comps.queryItems = [URLQueryItem(name: "k", value: key)]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["token": hex])
+        URLSession.shared.dataTask(with: req).resume()
+    }
+
+    // App 開在前景時通知照樣跳橫幅
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler handler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        handler([.banner, .sound, .badge])
     }
 }
 

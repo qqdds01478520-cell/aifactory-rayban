@@ -171,6 +171,7 @@ workflows:
           cd DashboardApp
           xcodebuild -project AIFactoryDashboard.xcodeproj -scheme AIFactoryDashboard -sdk iphoneos -configuration Release archive \
             -archivePath build/AIFactoryDashboard.xcarchive \
+            RELAY_AUTH_KEY="${RELAY_AUTH_KEY:-}" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="iPhone Distribution" \

@@ -10,10 +10,17 @@ targets:
     platform: iOS
     sources:
       - Sources
+    entitlements:
+      path: AIFactoryDashboard.entitlements
+      properties:
+        aps-environment: production
     info:
       path: Info.plist
       properties:
         CFBundleDisplayName: AI工廠
+        RelayAuthKey: $(RELAY_AUTH_KEY)
+        CFBundleVersion: "2"
+        CFBundleShortVersionString: "1.1"
         UILaunchScreen:
           UIColorName: ""
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
