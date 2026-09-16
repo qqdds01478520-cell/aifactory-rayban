@@ -1,0 +1,24 @@
+# XcodeGen 規格 — AI工廠商用控制台 iOS 殼（WKWebView 載 Tailscale Funnel 網址）
+name: AIFactoryDashboard
+options:
+  bundleIdPrefix: com.aifactory
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  AIFactoryDashboard:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: AI工廠
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aifactory.dashboard
+        TARGETED_DEVICE_FAMILY: "1"
