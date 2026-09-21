@@ -168,6 +168,33 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         triggerLocalNetworkPrompt()
         guard registered else { throw GlassesError.notRegistered }
 
+        // 0) 【董 9/22 補回：485eafc 誤刪的 ensureAccess 閘】逐段抄 vision GlassesCamera.ensureAccess 實機版。
+        //    485eafc「全部重寫」時把這段當成 2bd1790 的 patch 一起砍了，是錯的——vision 的 ensureAccess 是
+        //    createSession「之前」的必經閘，砍掉才是董實機 log「Session ended by device / Device unavailable」
+        //    的真因（session 在 device 只是 online、link 還沒 .connected 時開，眼鏡端立刻回絕）。
+        //    ① 等眼鏡藍牙鏈路真的 .connected（裝置「已知」≠ link 在線；摺著/待機時不是 .connected）。
+        let linkDeadline = Date().addingTimeInterval(30)
+        var lastReport = ""
+        var linkUp = false
+        while Date() < linkDeadline {
+            let devices = Wearables.shared.devices.compactMap { Wearables.shared.deviceForIdentifier($0) }
+            let report = devices.map { "link=\($0.linkState)" }.joined(separator: ";")
+            if report != lastReport { RemoteLog.send("devices: \(report.isEmpty ? "none" : report)"); lastReport = report }
+            if devices.contains(where: { $0.linkState == .connected }) { linkUp = true; break }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        guard linkUp else { throw GlassesError.noDeviceOnline }
+        // ② 相機權限在「開 session 之前」就要授權（vision ensureAccess 順序）——綁定≠授權，沒授權眼鏡端
+        //    會直接回絕 session。.denied 不是終態（使用者仍可在提示按同意），所以照 vision 一律 request。
+        let perm0 = try await Wearables.shared.checkPermissionStatus(.camera)
+        RemoteLog.send("camera permission (連線前) = \(perm0)")
+        if perm0 != .granted {
+            RemoteLog.send("requestPermission(.camera) → 跳 Meta AI…")
+            let res0 = try await Wearables.shared.requestPermission(.camera)
+            RemoteLog.send("camera permission after request = \(res0)")
+            guard res0 == .granted else { throw GlassesError.cameraPermissionDenied }
+        }
+
         // 1) 用「新鮮的」AutoDeviceSelector，暖它到自己觀察出 activeDevice（≤15s）。vision 原註解：
         //    剛建的 selector 有一拍還沒 activeDevice，這拍 createSession 會丟 noEligibleDevice；要暖
         //    「同一個」實例再交出去。硬體上眼鏡也可能在 app 詢問後一拍才連上——比只查 hasDevice 流可靠。
@@ -215,16 +242,7 @@ final class GlassesManager: ObservableObject, CommandExecutor {
             try s.start()
             if s.state == .started { live.deliver(.success(())) }   // already-started race
             try await Self.bounded(30, "session start") { await live.wait() }.get()
-
-            // 相機權限（綁定≠授權；沒授權串流永遠 waitingForDevice→deviceNotConnected）
-            let perm = try await Wearables.shared.checkPermissionStatus(.camera)
-            RemoteLog.send("camera permission = \(perm)")
-            if perm != .granted {
-                RemoteLog.send("requestPermission(.camera) → 跳 Meta AI…")
-                let res = try await Wearables.shared.requestPermission(.camera)
-                RemoteLog.send("camera permission after request = \(res)")
-                guard res == .granted else { throw GlassesError.cameraPermissionDenied }
-            }
+            // 相機權限已在連線前（步驟②）授權完畢，這裡不再檢查（vision ensureAccess 順序）。
         } catch {
             disconnect()   // 清殭屍 session，讓下次連線是全新的
             throw error
