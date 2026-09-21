@@ -11,25 +11,12 @@ struct RaybanCOOApp: App {
         WindowGroup {
             ContentView()
                 #if canImport(MWDATCore)
-                .onOpenURL { url in       // 第二批：Meta AI app 授權回呼
+                .onOpenURL { url in       // Meta AI app 註冊/授權回呼（全域狀態，DATLab 直接讀 Wearables.shared）
                     Task { await GlassesManager.shared.handleUrl(url) }
                 }
-                .task {
-                    // 指令橋常駐：眼鏡網頁（畫面）下單 → 本 app（後台引擎）領單執行
-                    guard AppConfig.hasRelayKey else { return }
-                    let bridge = RemoteDebugBridge(authKey: AppConfig.authKey,
-                                                   executor: GlassesManager.shared)
-                    await bridge.start()
-                }
-                .task {
-                    // 董事長 2026-09-05：手機常駐錄音不要、眼鏡常駐背景聽可以。
-                    // startAlwaysOn 只在偵測到眼鏡藍牙麥時才開麥，沒連眼鏡＝完全不錄（見 AudioHub）。
-                    await AudioHub.shared.requestPermission()
-                    AudioHub.shared.startAlwaysOn()
-                    // 掛狀態監看；不開機自動拍照（會搶眼鏡畫面＋背景凍結留殭屍 session）
-                    guard AppConfig.hasRelayKey else { return }
-                    GlassesManager.shared.watchState()
-                }
+                // 2026-09-22 重做：**刻意拿掉 AudioHub.startAlwaysOn 與指令橋**。
+                // omi 產品原碼證實：背景常駐 HFP 麥會害 DAT 相機 session 開不起來（Device unavailable）。
+                // 這版先驗「乾淨、無背景麥」能不能開得起 session；驗過再決定要不要把耳目那條加回。
                 #endif
         }
     }
