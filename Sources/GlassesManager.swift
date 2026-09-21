@@ -2,6 +2,7 @@
 // 用 #if canImport 包住：第一批純手機 UI（project.yml 不含 MWDAT）時整檔不編譯，
 // 確保雲端模擬器一定編得出畫面截圖；第二批把 MWDAT 加回 project.yml 即自動啟用。
 #if canImport(MWDATCore)
+import CoreMedia
 import Foundation
 import Network
 import MWDATCore
@@ -34,6 +35,15 @@ final class GlassesManager: ObservableObject, CommandExecutor {
     private var streamState: StreamState = .stopped   // 拍照前置條件：必須 .streaming（官方 sample 鐵則）
     private var watching = false
     private var jarvisRunning = false
+
+    // 即時觀看（董事長 2026-09-21 圈選②）：眼鏡直播幀 → FrameStreamer → claco-hud /api/frame
+    private var watchStreamer: FrameStreamer?
+    private var frameToken: Any?         // videoFramePublisher 訂閱（同 photoToken，必須存屬性）
+    /// 在 stream.start() 之前就要掛好的幀處理器（vision 實機教訓：start 後才掛會漏掉
+    /// 第一個關鍵幀，解碼器整條流 -17694 直到下一個關鍵幀）。watch 期間全程保持設定，
+    /// 這樣 stall 重連時 connect() 會自動重掛。
+    private var pendingFrameHandler: (@Sendable (CMSampleBuffer) -> Void)?
+    private var watchRunning = false
 
     /// 開機就盯註冊狀態流＋裝置偵測流，反映到 UI。（冪等，可重複呼叫）
     func watchState() {
@@ -124,7 +134,7 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         let gen = releaseGen
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
-            guard let self, self.releaseGen == gen, !self.jarvisRunning else { return }
+            guard let self, self.releaseGen == gen, !self.jarvisRunning, !self.watchRunning else { return }
             self.disconnect()
             RemoteLog.send("session released (auto) — 眼鏡畫面已還原")
         }
@@ -212,6 +222,10 @@ final class GlassesManager: ObservableObject, CommandExecutor {
                     RemoteLog.send("streamError → \(err)")
                 }
             })
+            // 幀處理器要在 start() 前掛好（vision 鐵則：第一個關鍵幀不能漏）
+            if let handler = pendingFrameHandler {
+                frameToken = c.stream.videoFramePublisher.listen { frame in handler(frame.sampleBuffer) }
+            }
             c.stream.start()
             camera = c
         }
@@ -225,9 +239,51 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         session?.stop()
         camera = nil; display = nil; session = nil
         displayToken = nil; displayState = nil
+        frameToken = nil
         tokens.removeAll()
         streamState = .stopped
         connected = false
+    }
+
+    // MARK: - 即時觀看（watch 模式）
+
+    /// 開始把眼鏡看到的畫面以 ~1fps 送 claco-hud，COO 端輪詢 /api/frame 當眼睛。
+    /// 每次都拆掉舊連線重來（vision 實機：接到半路流的解碼器 5 次卡 2 次，新流 3 秒起）。
+    func startWatch(seconds: Double = 600) async throws {
+        stopWatch(disconnectToo: false)
+        disconnect()
+        let streamer = FrameStreamer(config: .init(maxSeconds: seconds)) { [weak self] in
+            Task { @MainActor in self?.stopWatch() }
+        }
+        streamer.onStall = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.watchRunning else { return }
+                RemoteLog.send("WATCH: stall — 重開一條新流")
+                self.disconnect()   // pendingFrameHandler 還在，connect() 會重掛
+                try? await self.ensureConnected()
+            }
+        }
+        watchStreamer = streamer
+        pendingFrameHandler = { buffer in streamer.handle(buffer) }
+        watchRunning = true
+        do { try await ensureConnected() }
+        catch {
+            stopWatch()
+            throw error
+        }
+        RemoteLog.send("WATCH: running（上限 \(Int(seconds))s）")
+    }
+
+    func stopWatch(disconnectToo: Bool = true) {
+        watchRunning = false
+        pendingFrameHandler = nil
+        watchStreamer?.stop()
+        watchStreamer = nil
+        frameToken = nil
+        if disconnectToo, connected {
+            disconnect()
+            RemoteLog.send("WATCH: session released — 眼鏡畫面已還原")
+        }
     }
 
     private var displayGen = 0   // 自動釋放用世代碼：新內容進來就取消舊的還原排程
@@ -461,6 +517,13 @@ final class GlassesManager: ObservableObject, CommandExecutor {
                     return CommandResult(id: cmd.id, ok: true, result: "🗣 \(heard)\n— \(ans)", log: "qid:\(vqid)")
                 }
                 return CommandResult(id: cmd.id, ok: false, result: "", log: "克拉扣還在想，再捏兩下重問")
+            case "watch_start":
+                let secs = Double(cmd.args?["seconds"] ?? "") ?? 600
+                try await startWatch(seconds: secs)
+                return CommandResult(id: cmd.id, ok: true, result: "watch on \(Int(secs))s", log: "")
+            case "watch_stop":
+                stopWatch()
+                return CommandResult(id: cmd.id, ok: true, result: "watch off", log: "")
             case "jarvis_start":
                 startJarvis()
                 return CommandResult(id: cmd.id, ok: true, result: "jarvis on", log: "")
