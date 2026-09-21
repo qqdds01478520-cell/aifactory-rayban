@@ -163,13 +163,21 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         if session != nil { disconnect() }   // 舊 session 沒清就 createSession 會 sessionAlreadyExists
         triggerLocalNetworkPrompt()
         guard registered else { throw GlassesError.notRegistered }
-        // 1) 等眼鏡在線（最多 12 秒；watchState 的裝置流會把 hasDevice 翻 true）
-        var waited = 0
-        while !hasDevice && waited < 48 {
-            try await Task.sleep(nanoseconds: 250_000_000)
-            waited += 1
+        // 1) 等眼鏡「藍牙鏈路真的連上」（逐段抄 vision GlassesCamera.awaitConnectedDevice 實機驗證版）：
+        //    裝置「已知」≠ link 在線——眼鏡摺著/待機時 linkState 不是 .connected，這時 createSession
+        //    session 永遠卡 stopped（9/21 董實測 sessionTimeout("stopped") 的真因）。30 秒輪詢等 link。
+        let linkDeadline = Date().addingTimeInterval(30)
+        var lastReport = ""
+        var linkUp = false
+        while Date() < linkDeadline {
+            let devices = Wearables.shared.devices.compactMap { Wearables.shared.deviceForIdentifier($0) }
+            let report = devices.map { "link=\($0.linkState)" }.joined(separator: ";")
+            if report != lastReport { RemoteLog.send("devices: \(report.isEmpty ? "none" : report)"); lastReport = report }
+            if devices.contains(where: { $0.linkState == .connected }) { linkUp = true; break }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
-        guard hasDevice else { throw GlassesError.noDeviceOnline }
+        guard linkUp else { throw GlassesError.noDeviceOnline }
+        var waited = 0
         // 2) 建 session（先訂狀態再 start，不漏初始轉換）
         guard let sel = selector else { throw GlassesError.noDeviceOnline }
         let s = try Wearables.shared.createSession(deviceSelector: sel)
@@ -185,9 +193,10 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         // 任何一步失敗都先 disconnect 清掉半開的殭屍 session，避免佔死眼鏡端（iOS 背景凍結後的元兇）
         do {
             try s.start()
-            // 3) 等 .started（最多 15 秒）才掛能力
+            // 3) 等 .started 才掛能力——30 秒，抄 vision CameraPoC 實機口徑
+            //    （vision 原話：BT session setup is slow and variable, 10s ceiling 會在握手完成前逾時）
             waited = 0
-            while s.state != .started && waited < 60 {
+            while s.state != .started && waited < 120 {
                 try await Task.sleep(nanoseconds: 250_000_000)
                 waited += 1
             }
