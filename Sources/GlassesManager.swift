@@ -157,51 +157,66 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         }
     }
 
+    /// 連線＝整段照抄 vision GlassesCamera 實機驗證版（董事長 9/22「整個照別人的方法全部重寫」）。
+    /// 舊做法卡點＝靠長駐 selector 的 hasDevice 流 + 輪詢 s.state；vision 的鐵則是「新鮮 selector 暖到
+    /// activeDevice → createSession 重試 → 訂閱先於 start 用 Inbox 收第一個 .started/.stopped（含
+    /// already-started race）」，這才是 40-50 次卡 stopped 的真正修法。
     func connect() async throws {
         lastError = ""
         watchState()
         if session != nil { disconnect() }   // 舊 session 沒清就 createSession 會 sessionAlreadyExists
         triggerLocalNetworkPrompt()
         guard registered else { throw GlassesError.notRegistered }
-        // 1) 等眼鏡「藍牙鏈路真的連上」（逐段抄 vision GlassesCamera.awaitConnectedDevice 實機驗證版）：
-        //    裝置「已知」≠ link 在線——眼鏡摺著/待機時 linkState 不是 .connected，這時 createSession
-        //    session 永遠卡 stopped（9/21 董實測 sessionTimeout("stopped") 的真因）。30 秒輪詢等 link。
-        let linkDeadline = Date().addingTimeInterval(30)
-        var lastReport = ""
-        var linkUp = false
-        while Date() < linkDeadline {
-            let devices = Wearables.shared.devices.compactMap { Wearables.shared.deviceForIdentifier($0) }
-            let report = devices.map { "link=\($0.linkState)" }.joined(separator: ";")
-            if report != lastReport { RemoteLog.send("devices: \(report.isEmpty ? "none" : report)"); lastReport = report }
-            if devices.contains(where: { $0.linkState == .connected }) { linkUp = true; break }
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-        guard linkUp else { throw GlassesError.noDeviceOnline }
-        var waited = 0
-        // 2) 建 session（先訂狀態再 start，不漏初始轉換）
-        guard let sel = selector else { throw GlassesError.noDeviceOnline }
-        let s = try Wearables.shared.createSession(deviceSelector: sel)
-        session = s
-        tokens.append(s.statePublisher.listen { [weak self] st in
-            Task { @MainActor in
-                if st == .stopped { self?.connected = false }
+
+        // 1) 用「新鮮的」AutoDeviceSelector，暖它到自己觀察出 activeDevice（≤15s）。vision 原註解：
+        //    剛建的 selector 有一拍還沒 activeDevice，這拍 createSession 會丟 noEligibleDevice；要暖
+        //    「同一個」實例再交出去。硬體上眼鏡也可能在 app 詢問後一拍才連上——比只查 hasDevice 流可靠。
+        let sel = AutoDeviceSelector(wearables: Wearables.shared)
+        try await Self.bounded(15, "device selection") {
+            while sel.activeDevice == nil && !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 100_000_000)
             }
-        })
+        }
+        guard sel.activeDevice != nil else { throw GlassesError.noDeviceOnline }
+        selector = sel
+
+        // 2) createSession——stop() 回傳早於 DAT 真正釋放裝置，那空窗會誤報「session already exists」，
+        //    重試 6 次（每次隔 1s）而非直接失敗（vision 實機 stall 重啟教訓）。
+        var made: DeviceSession?
+        for attempt in 1...6 {
+            do { made = try Wearables.shared.createSession(deviceSelector: sel); break }
+            catch {
+                RemoteLog.send("createSession 第 \(attempt)/6 失敗: \(error)")
+                if attempt == 6 { throw error }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+        guard let s = made else { throw GlassesError.noDeviceOnline }
+        session = s
+
+        // 3) 訂閱「先於」start()，用 Inbox 收第一個 .started/.stopped；補 already-started race。vision
+        //    原註解：舊碼在 start() 後才 iterate stateStream，會漏掉那次轉換而永久卡住。.stopped 立即當
+        //    失敗回報（不再空等 30 秒才逾時）——這正是董卡 stopped 的病灶。
+        let live = Inbox<Result<Void, GlassesError>>()
         tokens.append(s.errorPublisher.listen { [weak self] err in
             Task { @MainActor in self?.lastError = "\(err)" }
+            RemoteLog.send("session ERROR: \(err)")
         })
-        // 任何一步失敗都先 disconnect 清掉半開的殭屍 session，避免佔死眼鏡端（iOS 背景凍結後的元兇）
+        tokens.append(s.statePublisher.listen { [weak self] st in
+            RemoteLog.send("session state → \(st)")
+            Task { @MainActor in if st == .stopped { self?.connected = false } }
+            switch st {
+            case .started: live.deliver(.success(()))
+            case .stopped: live.deliver(.failure(.sessionTimeout("stopped")))
+            default: break
+            }
+        })
         do {
             try s.start()
-            // 3) 等 .started 才掛能力——30 秒，抄 vision CameraPoC 實機口徑
-            //    （vision 原話：BT session setup is slow and variable, 10s ceiling 會在握手完成前逾時）
-            waited = 0
-            while s.state != .started && waited < 120 {
-                try await Task.sleep(nanoseconds: 250_000_000)
-                waited += 1
-            }
-            guard s.state == .started else { throw GlassesError.sessionTimeout("\(s.state)") }
-            // 眼鏡相機是獨立權限（綁定≠授權）：沒授權串流永遠 waitingForDevice→deviceNotConnected
+            if s.state == .started { live.deliver(.success(())) }   // already-started race
+            try await Self.bounded(30, "session start") { await live.wait() }.get()
+
+            // 相機權限（綁定≠授權；沒授權串流永遠 waitingForDevice→deviceNotConnected）
             let perm = try await Wearables.shared.checkPermissionStatus(.camera)
             RemoteLog.send("camera permission = \(perm)")
             if perm != .granted {
@@ -214,24 +229,19 @@ final class GlassesManager: ObservableObject, CommandExecutor {
             disconnect()   // 清殭屍 session，讓下次連線是全新的
             throw error
         }
-        // 不在連線時 addDisplay——接管鏡片會蓋掉眼鏡原生畫面（董事長 9/5：畫面要獨立分開）。
-        // 顯示改成 showText 用時才掛、幾秒後自動釋放還原。
-        let cfg = StreamConfiguration(videoCodec: .hvc1, resolution: .medium, frameRate: 24)
+
+        // 4) 相機＋串流：訂閱先於 start（官方 sample）、幀處理器 start() 前掛（vision 鐵則，不漏首關鍵幀）。
+        //    不在連線時 addDisplay——接管鏡片會蓋掉眼鏡原生畫面（董 9/5：畫面獨立），顯示改 showText 用時才掛。
+        let cfg = StreamConfiguration(videoCodec: .hvc1, resolution: .medium, frameRate: 15)
         if let c = try s.addCamera(config: cfg) {
-            // 先訂狀態再 start（官方 sample）；拍照鐵則＝要等 .streaming
             tokens.append(c.stream.statePublisher.listen { [weak self] st in
-                Task { @MainActor in
-                    self?.streamState = st
-                    RemoteLog.send("streamState → \(st)")
-                }
+                Task { @MainActor in self?.streamState = st }
+                RemoteLog.send("streamState → \(st)")
             })
             tokens.append(c.stream.errorPublisher.listen { [weak self] err in
-                Task { @MainActor in
-                    self?.lastError = "\(err)"
-                    RemoteLog.send("streamError → \(err)")
-                }
+                Task { @MainActor in self?.lastError = "\(err)" }
+                RemoteLog.send("streamError → \(err)")
             })
-            // 幀處理器要在 start() 前掛好（vision 鐵則：第一個關鍵幀不能漏）
             if let handler = pendingFrameHandler {
                 frameToken = c.stream.videoFramePublisher.listen { frame in handler(frame.sampleBuffer) }
             }
@@ -240,6 +250,24 @@ final class GlassesManager: ObservableObject, CommandExecutor {
         }
         connected = true
         RemoteLog.send("connect OK: \(statusText())")
+    }
+
+    /// 有界等待（整抄 vision GlassesCamera.bounded）：眼鏡可能永遠不回（闔上/超距/過熱/沒電），
+    /// 每個等待都設上限，逾時丟 sessionTimeout 而不是把整條命令鏈卡死。
+    private static func bounded<T: Sendable>(
+        _ seconds: Double, _ label: String,
+        _ work: @escaping @Sendable () async -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { await work() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw GlassesError.sessionTimeout(label)
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else { throw GlassesError.sessionTimeout(label) }
+            return first
+        }
     }
 
     func disconnect() {
@@ -594,6 +622,37 @@ enum GlassesError: LocalizedError {
         case .streamNotReady(let s): return "鏡頭串流還沒就緒（\(s)）——等幾秒再按③；一直不行就按②重連"
         case .photoRejected: return "眼鏡拒收拍照指令——按②重連後再試③"
         case .cameraPermissionDenied: return "相機權限沒開——按②會跳 Meta AI，請選「一律允許」再回來"
+        }
+    }
+}
+
+/// 把 DAT 的回調式 Announcer 橋成 async（整抄 vision GlassesCamera.Inbox）。兩個眉角：announcer 會
+/// 重複觸發但 continuation 只准 resume 一次；且值可能早於 wait() 就到——先握住第一個值兩者都涵蓋。
+private final class Inbox<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: T?
+    private var waiter: CheckedContinuation<T, Never>?
+
+    func deliver(_ incoming: T) {
+        lock.lock()
+        guard value == nil else { return lock.unlock() }
+        value = incoming
+        let waiter = self.waiter
+        self.waiter = nil
+        lock.unlock()
+        waiter?.resume(returning: incoming)
+    }
+
+    func wait() async -> T {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if let value {
+                lock.unlock()
+                continuation.resume(returning: value)
+                return
+            }
+            waiter = continuation
+            lock.unlock()
         }
     }
 }
