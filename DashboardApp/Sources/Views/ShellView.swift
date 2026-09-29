@@ -111,7 +111,14 @@ struct WebShell: UIViewRepresentable {
         return """
         (function(){
           var NT = \(js(token)), NR = \(js(refresh));
-          try { if (NT && !localStorage.getItem('aif_token')) { localStorage.setItem('aif_token', NT); if (NR) localStorage.setItem('aif_refresh_token', NR); } } catch(e){}
+          // 只在這次 app 啟動的第一次載入種一次（sessionStorage 旗標）：網頁「登出」＝清 token 後 reload，
+          // 若每次載入都重種，登出會被原生舊 token 秒接回去——董事長 9/29 TG10189「登出按鍵是裝飾品」。
+          try {
+            if (NT && !localStorage.getItem('aif_token') && !sessionStorage.getItem('aif_native_seeded')) {
+              localStorage.setItem('aif_token', NT); if (NR) localStorage.setItem('aif_refresh_token', NR);
+            }
+            sessionStorage.setItem('aif_native_seeded', '1');
+          } catch(e){}
           var post = function(m){ try { window.webkit.messageHandlers.native.postMessage(m); } catch(e){} };
           var last = null;
           setInterval(function(){
