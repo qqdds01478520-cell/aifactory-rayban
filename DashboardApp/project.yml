@@ -19,7 +19,7 @@ targets:
       properties:
         CFBundleDisplayName: AI工廠
         RelayAuthKey: $(RELAY_AUTH_KEY)
-        CFBundleVersion: "3"
+        CFBundleVersion: "4"
         CFBundleShortVersionString: "2.0"
         UILaunchScreen:
           UIColorName: ""

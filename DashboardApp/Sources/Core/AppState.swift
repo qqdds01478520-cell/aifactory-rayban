@@ -66,6 +66,17 @@ final class AppState: ObservableObject {
         baseString = trimmed
         let r: LoginResponse = try await api.request("/api/auth/login", method: "POST",
                                                      body: ["username": user, "password": pass], auth: false, retry: false)
+        await finishLogin(r, user: user)
+    }
+    // 設定伺服器網址（登入前 needs-setup / register / reset 也要打對台）
+    func applyServer(_ server: String) throws {
+        let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let u = URL(string: trimmed), u.scheme != nil else { throw APIError(status: 0, message: L("伺服器網址格式不對")) }
+        api.baseURL = u
+        baseString = trimmed
+    }
+    // 登入／註冊／首次建帳 拿到 token 後共用
+    func finishLogin(_ r: LoginResponse, user: String) async {
         api.token = r.token
         api.refreshToken = r.refresh_token
         Keychain.set(r.token, for: "token")
@@ -89,12 +100,12 @@ final class AppState: ObservableObject {
     // MARK: Face ID（B1）
     func unlock() async {
         let ctx = LAContext()
-        ctx.localizedCancelTitle = L("common.cancel")
+        ctx.localizedCancelTitle = L("取消")
         var err: NSError?
         let policy: LAPolicy = ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err)
             ? .deviceOwnerAuthenticationWithBiometrics : .deviceOwnerAuthentication
         do {
-            let ok = try await ctx.evaluatePolicy(policy, localizedReason: L("login.faceid"))
+            let ok = try await ctx.evaluatePolicy(policy, localizedReason: L("使用 Face ID 解鎖控制台"))
             if ok { locked = false; Haptic.success() }
         } catch { /* 留在鎖定畫面 */ }
     }

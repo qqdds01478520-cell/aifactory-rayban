@@ -20,6 +20,8 @@ struct StateResponse: Codable {
 
 struct Agent: Codable, Identifiable, Hashable {
     var name: String
+    var title: String?
+    var steward: Bool?
     var model: String?
     var channels: [String]?
     var running: Bool?
@@ -56,6 +58,13 @@ struct UsageResponse: Codable {
     var range: String?
     var agents: [UsageAgent]?
 }
+struct HourBucket: Codable, Hashable {
+    var input: Double?
+    var output: Double?
+    var cache_create: Double?
+    var cache_read: Double?
+    var calls: Double?
+}
 struct UsageAgent: Codable {
     var name: String
     var model: String?
@@ -64,6 +73,7 @@ struct UsageAgent: Codable {
     var cache_create: Double?
     var cache_read: Double?
     var calls: Double?
+    var per_hour: [String: HourBucket]?
     var total7d: Double { (input ?? 0) + (output ?? 0) + (cache_create ?? 0) + (cache_read ?? 0) }
 }
 
@@ -216,6 +226,8 @@ struct UsersList: Codable { var users: [DashUser]? }
 struct DashUser: Codable, Identifiable, Hashable {
     var id: Int
     var username: String
+    var email: String?
+    var email_verified: Bool?
     var role: String?
     var tenant_id: String?
     var created_at: String?
@@ -262,3 +274,96 @@ struct StoreBuyer: Codable, Identifiable, Hashable {
     var status: String?
     var created_at: String?
 }
+
+// ---- 2026-09-29 v2.1 網頁對齊新增 ----
+struct TemplatesResponse: Codable { var templates: [AgentTemplate]? }
+struct AgentTemplate: Codable, Identifiable, Hashable {
+    var id: String
+    var name: String?
+    var icon: String?
+    var tagline: String?
+    var sample_tasks: [String]?
+    var claude_md: String?
+}
+struct TemplateDetail: Codable { var template: AgentTemplate? }
+struct FccStatus: Codable { var chatgpt_connected: Bool?; var running: Bool? }
+struct TunnelStatus: Codable {
+    var running: Bool?
+    var url: String?
+    var qr: String?
+    var mode: String?
+    var installed: Bool?
+    var error: String?
+    var status: String?
+}
+struct LicenseList: Codable { var licenses: [LicenseItem]? }
+struct LicenseItem: Codable, Identifiable, Hashable {
+    var key: String
+    var tenant_id: String?
+    var tier: String?
+    var status: String?
+    var expires_at: String?
+    var id: String { key }
+}
+struct HwidResponse: Codable { var hwid: String? }
+struct IssueResponse: Codable { var key: String?; var error: String?; var detail: String? }
+struct SearchResponse: Codable { var results: [SearchHit]? }
+struct SearchHit: Codable, Hashable {
+    var source: String?
+    var agent: String?
+    var channel_name: String?
+    var author: String?
+    var ts: String?
+    var snippet: String?
+}
+struct AdminStats: Codable {
+    var total_users: Int?
+    var total_listings: Int?
+    var total_orders: Int?
+    var total_revenue: Double?
+    var total_licenses: Int?
+}
+struct AdminListings: Codable { var listings: [AdminListing]? }
+struct ListingPricing: Codable, Hashable { var per_month: Double?; var one_time: Double?; var currency: String? }
+struct AdminListing: Codable, Identifiable, Hashable {
+    var id: String
+    var name: String?
+    var description: String?
+    var type: String?
+    var status: String?
+    var seller_name: String?
+    var pricing: ListingPricing?
+}
+struct StoreProducts: Codable { var products: [StoreProduct]?; var central: Bool? }
+struct StoreProduct: Codable, Identifiable, Hashable {
+    var id: String
+    var name: String?
+    var type: String?
+    var description: String?
+    var price: Double?
+    var currency: String?
+    var official: Bool?
+    var seller_name: String?
+    var drm: Bool?
+}
+struct StoreCentral: Codable { var url: String?; var configured: Bool?; var reachable: Bool?; var third_party_listing: Bool? }
+struct StoreOwned: Codable { var owned: [OwnedItem]? }
+struct OwnedItem: Codable, Identifiable, Hashable {
+    var product_id: String
+    var name: String?
+    var ptype: String?
+    var drm: Bool?
+    var unlocked_at: String?
+    var id: String { product_id }
+}
+struct BuyerAccount: Codable { var logged_in: Bool?; var email: String?; var configured: Bool? }
+struct CheckoutResponse: Codable { var ok: Bool?; var checkout_url: String?; var error: String? }
+struct RedeemResponse: Codable { var ok: Bool?; var drm: Bool?; var error: String?; var detail: String? }
+struct CodexStatus: Codable { var installed: Bool?; var installing: Bool?; var progress: Double?; var logged_in: Bool?; var error: String? }
+struct ConnectStatus: Codable { var connected: Bool?; var state: String?; var email: String?; var error: String?; var running: Bool? }
+struct ConnectStart: Codable { var ok: Bool?; var authorization_url: String?; var error: String? }
+struct AiLoginStatus: Codable { var connected: Bool?; var ok: Bool?; var already: Bool?; var authorization_url: String?; var error: String? }
+struct ErrorTour: Codable { var enabled: Bool? }
+struct UserPluginsResponse: Codable { var plugins: [UserPlugin]? }
+struct TranslateResponse: Codable { var content: String?; var translated: String?; var text: String?; var error: String? }
+struct MessageResp: Codable { var ok: Bool?; var message: String?; var error: String?; var who: String?; var pending: Bool? }

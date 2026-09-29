@@ -1,466 +1,294 @@
 import SwiftUI
-import AVKit
 
+// 更多＝網頁 MorePage：系統狀態卡、🧭 重看新手教學、錯誤導覽教學開關、管理／內容／監控分區、我的插件、登出、刪除帳號
 struct MoreView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var nav: Nav
     @EnvironmentObject var l10n: L10n
+    @State private var errorTour = false
+    @State private var plugins: [UserPlugin] = []
+    @State private var pluginsLoaded = false
+    @State private var adding = false
+    @State private var newName = ""
+    @State private var newUrl = ""
+    @State private var showDelete = false
+    @State private var showSettings = false
+    @State private var pendingRemove: Int?
+    var internalMode: Bool { state.health?.isInternal ?? false }
+    static let defaultPlugins: [UserPlugin] = [
+        UserPlugin(name: "GPU 排程器", url: "/plugin-proxy/scheduler/", page: nil, proxied: true),
+        UserPlugin(name: "影片成品區", url: nil, page: "products", proxied: nil),
+    ]
+
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    if state.health?.isInternal ?? true {
-                        NavigationLink { ProductsView() } label: { Label(L("more.products"), systemImage: "film.stack") }
-                    }
-                    NavigationLink { BoardView() } label: { Label(L("more.board"), systemImage: "rectangle.split.3x1") }
-                    NavigationLink { DiscordView() } label: { Label(L("more.discord"), systemImage: "message") }
-                    NavigationLink { KnowledgeView() } label: { Label(L("more.knowledge"), systemImage: "books.vertical") }
-                }.listRowBackground(Theme.surface)
-                if state.isAdmin {
-                    Section {
-                        NavigationLink { BackupView() } label: { Label(L("more.backup"), systemImage: "externaldrive.badge.timemachine") }
-                        NavigationLink { AuditView() } label: { Label(L("more.audit"), systemImage: "doc.text.magnifyingglass") }
-                        NavigationLink { UsersView() } label: { Label(L("more.users"), systemImage: "person.badge.key") }
-                        NavigationLink { StoreAdminView() } label: { Label(L("more.store"), systemImage: "storefront") }
-                    }.listRowBackground(Theme.surface)
-                }
-                Section {
-                    NavigationLink { SettingsView() } label: { Label(L("more.settings"), systemImage: "gearshape") }
-                }.listRowBackground(Theme.surface)
-                Section {
-                    HStack { Text(L("more.account")); Spacer(); Text("\(state.username) · \(state.role)").foregroundColor(Theme.muted) }
-                    Button(role: .destructive) { state.logout() } label: { Label(L("more.logout"), systemImage: "rectangle.portrait.and.arrow.right") }
-                }.listRowBackground(Theme.surface)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                PageTitle(L("更多"))
+                healthCard
+                tutorialCard
+                errorTourCard
+                MoreSection(title: L("管理"), rows: manageRows)
+                MoreSection(title: L("內容"), rows: [MoreRow(icon: "🛒", label: L("商城"), desc: L("購買並用解鎖碼解鎖員工/技能"), action: { nav.open(.store) })])
+                MoreSection(title: L("監控"), rows: [MoreRow(icon: "📊", label: L("Token 用量"), desc: L("7 天用量統計"), action: { nav.open(.usage) })])
+                MoreSection(title: "App", rows: [MoreRow(icon: "📲", label: L("App 設定"), desc: L("Face ID、觸覺、背景更新、推播、快取、版本"), action: { showSettings = true })])
+                pluginsSection
+                Button(L("登出")) { state.logout() }
+                    .buttonStyle(SoftButtonStyle(padV: 14, size: 14, full: true, bg: Theme.surface, fg: Theme.text2, border: true))
+                Button(L("刪除帳號")) { showDelete = true }
+                    .font(WF.sans(13, .semibold)).foregroundColor(Theme.danger).frame(maxWidth: .infinity).padding(.top, 4)
             }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-            .navigationTitle(L("tab.more"))
+            .pageBody()
         }
+        .background(Theme.bg.ignoresSafeArea())
+        .task {
+            if let r: ErrorTour = try? await state.api.request("/api/error-tour") { errorTour = r.enabled ?? false }
+            await loadPlugins()
+        }
+        .sheet(isPresented: $showDelete) { DeleteAccountSheet() }
+        .sheet(isPresented: $showSettings) { AppSettingsSheet() }
+        .confirmationDialog(L("移除這個插件？"), isPresented: Binding(get: { pendingRemove != nil }, set: { if !$0 { pendingRemove = nil } }), titleVisibility: .visible) {
+            Button(L("移除"), role: .destructive) {
+                if let i = pendingRemove, i < plugins.count { plugins.remove(at: i); Task { await savePlugins() } }
+                pendingRemove = nil
+            }
+        }
+    }
+
+    private var healthOk: Bool { let s = state.health?.status ?? ""; return s == "ok" || s == "healthy" }
+    private var healthCard: some View {
+        HStack(spacing: 10) {
+            Circle().fill(state.health == nil ? Theme.text3 : (healthOk ? Theme.success : Theme.danger)).frame(width: 12, height: 12)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("系統狀態：") + (state.health == nil ? L("連線中") : (healthOk ? L("正常") : L("異常")))).font(WF.sans(14, .semibold)).foregroundColor(Theme.text)
+                Text("v\(state.health?.version ?? "—") | " + L("運行") + " " + Fmt.uptime(state.health?.uptime_seconds ?? 0)).font(WF.sans(12)).foregroundColor(Theme.text2)
+            }
+            Spacer()
+        }.card()
+    }
+    private var tutorialCard: some View {
+        Button {
+            Task {
+                _ = try? await state.api.request("/api/tutorial/progress", method: "POST", body: ["done": false, "step": 0]) as OkResponse
+                _ = try? await state.api.request("/api/onboarding/complete", method: "POST", body: ["done": false]) as OkResponse
+                nav.show(L("已重設新手教學：下次在電腦或手機瀏覽器開控制台會從頭帶你走一遍"), "success", ms: 4000)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Text("🧭").font(.system(size: 20)).frame(width: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("重看新手教學")).font(WF.sans(14, .medium)).foregroundColor(Theme.text)
+                    Text(L("手機遠端連線、AI 認證、建立第一個員工")).font(WF.sans(12)).foregroundColor(Theme.text2)
+                }
+                Spacer()
+                Text("›").foregroundColor(Theme.text3)
+            }.card()
+        }.buttonStyle(.plain)
+    }
+    private var errorTourCard: some View {
+        Button {
+            let next = !errorTour
+            Task {
+                do { let _: OkResponse = try await state.api.request("/api/error-tour", method: "POST", body: ["enabled": next]); errorTour = next }
+                catch { nav.show(error.localizedDescription, "error") }
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Text("🧭").font(.system(size: 20)).frame(width: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("錯誤導覽教學")).font(WF.sans(14, .medium)).foregroundColor(Theme.text)
+                    Text(L("跳出錯誤訊息時，問你要不要一步步帶你解決")).font(WF.sans(12)).foregroundColor(Theme.text2)
+                }
+                Spacer()
+                WebSwitch(on: errorTour)
+            }.card()
+        }.buttonStyle(.plain)
+    }
+
+    private var manageRows: [MoreRow] {
+        var rows: [MoreRow] = []
+        if internalMode { rows.append(MoreRow(icon: "🔧", label: L("管理後台"), desc: L("平台總覽、內容審核"), action: { nav.open(.admin) })) }
+        rows.append(MoreRow(icon: "📱", label: L("遠端連線"), desc: L("手機掃 QR code 連線（固定網址）"), action: { nav.open(.remote) }))
+        rows.append(MoreRow(icon: "🔐", label: L("AI 認證設定"), desc: L("每位員工各自登入；改用 ChatGPT／Grok 額度"), action: { nav.open(.claudeToken) }))
+        rows.append(MoreRow(icon: "💾", label: L("備份管理"), desc: L("建立、還原、刪除備份"), action: { nav.open(.backup) }))
+        if state.isAdmin { rows.append(MoreRow(icon: "👥", label: L("用戶管理"), desc: L("新增、停權、重設密碼、刪除用戶"), action: { nav.open(.users) })) }
+        if internalMode { rows.append(MoreRow(icon: "🔑", label: L("授權管理"), desc: L("發行、啟用、撤銷授權碼"), action: { nav.open(.license) })) }
+        rows.append(MoreRow(icon: "📚", label: L("知識庫"), desc: L("員工的知識／設定檔"), action: { nav.open(.knowledge) }))
+        rows.append(MoreRow(icon: "🔍", label: L("搜尋"), desc: L("可搜尋 Discord 訊息及 Agent 工作階段紀錄"), action: { nav.open(.search) }))
+        return rows
+    }
+
+    // MARK: 我的插件
+    private var pluginsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(L("我的插件")).font(WF.sans(12, .bold)).foregroundColor(Theme.text2)
+                Spacer()
+                Button(adding ? L("取消") : "＋ " + L("新增")) { withAnimation { adding.toggle() } }
+                    .font(WF.sans(12, .semibold)).foregroundColor(Theme.primary)
+            }
+            if adding { addForm }
+            VStack(spacing: 0) {
+                if !pluginsLoaded { ProgressView().tint(Theme.primary).frame(maxWidth: .infinity).padding() }
+                ForEach(Array(plugins.enumerated()), id: \.element.id) { i, p in
+                    PluginRow(plugin: p, open: { nav.openPlugin(p) }, remove: { pendingRemove = i })
+                    if i < plugins.count - 1 { Divider().overlay(Theme.border).padding(.leading, 60) }
+                }
+                if pluginsLoaded && plugins.isEmpty { Text(L("尚無插件")).font(WF.sans(13)).foregroundColor(Theme.text3).frame(maxWidth: .infinity).padding() }
+            }.card(pad: 0)
+        }
+    }
+    private var addForm: some View {
+        VStack(spacing: 8) {
+            TextField(L("名稱（例：GPU 排程器）"), text: $newName).formField()
+            TextField(L("網址（例：http://localhost:8930/）"), text: $newUrl).noAutoCap().keyboardType(.URL).formField()
+            Button(L("儲存")) {
+                let n = newName.trimmingCharacters(in: .whitespaces), u = newUrl.trimmingCharacters(in: .whitespaces)
+                guard !n.isEmpty, !u.isEmpty else { return }
+                plugins.append(UserPlugin(name: n, url: u, page: nil, proxied: nil))
+                newName = ""; newUrl = ""; adding = false
+                Task { await savePlugins() }
+            }.buttonStyle(WarmButtonStyle(padV: 10, full: true))
+        }.card()
+    }
+    private func loadPlugins() async {
+        if let r: UserPluginsResponse = try? await state.api.request("/api/user-plugins"), let p = r.plugins, !p.isEmpty {
+            plugins = internalMode ? p : p.filter { $0.proxied != true }
+        } else {
+            plugins = internalMode ? Self.defaultPlugins : Self.defaultPlugins.filter { $0.proxied != true }
+        }
+        pluginsLoaded = true
+    }
+    private func savePlugins() async {
+        let arr: [[String: Any]] = plugins.map { p in
+            var d: [String: Any] = ["name": p.name]
+            if let u = p.url { d["url"] = u }
+            if let pg = p.page { d["page"] = pg }
+            if let pr = p.proxied { d["proxied"] = pr }
+            return d
+        }
+        do { let _: OkResponse = try await state.api.request("/api/user-plugins", method: "POST", body: ["plugins": arr]) }
+        catch { nav.show(error.localizedDescription, "error") }
     }
 }
 
-// MARK: - 通用載入器
-struct Loader<T: Decodable, Content: View>: View {
-    @EnvironmentObject var state: AppState
-    let path: String
-    var cacheKey: String? = nil
-    var timeout: TimeInterval = 25
-    @ViewBuilder var content: (T, @escaping () async -> Void) -> Content
-    @State private var value: T?
-    @State private var err: String?
-
+struct MoreRow: Identifiable { let icon: String; let label: String; let desc: String; let action: () -> Void; var id: String { label } }
+// 分區：h2 12px text-2 粗體大寫 ＋ 卡片列（icon 20 w32 / label 14 / desc 12 / ›）
+struct MoreSection: View {
+    let title: String
+    let rows: [MoreRow]
     var body: some View {
-        Group {
-            if let v = value { content(v, load) }
-            else if let err {
-                VStack(spacing: 10) {
-                    Text(err).font(.footnote).foregroundColor(Theme.danger).multilineTextAlignment(.center)
-                    Button(L("common.retry")) { Task { await load() } }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity).padding()
-            } else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
-        }
-        .task { await load() }
-    }
-    private func load() async {
-        do {
-            let v: T = try await state.api.request(path, timeout: timeout)
-            value = v; err = nil
-        } catch { if value == nil { err = error.localizedDescription } }
-    }
-}
-
-// MARK: - 影片成品區（站→日期→影片；AVPlayer 滿版，播完不再有任何蓋版）
-struct ProductsView: View {
-    var body: some View {
-        Loader(path: "/api/products/tree") { (tree: ProductsTree, reload) in
-            List {
-                ForEach(tree.stations) { st in
-                    NavigationLink { StationView(station: st, base: tree.media_base ?? "/products-media/") } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(st.name).font(.body.weight(.medium)).foregroundColor(Theme.text)
-                                Text("\(st.video_count ?? 0) \(L("prod.videos")) · \(st.date_count ?? 0) \(L("prod.dates"))").font(.caption).foregroundColor(Theme.muted)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased()).font(WF.sans(12, .bold)).foregroundColor(Theme.text2).tracking(0.5)
+            VStack(spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
+                    Button(action: r.action) {
+                        HStack(spacing: 12) {
+                            Text(r.icon).font(.system(size: 20)).frame(width: 32)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(r.label).font(WF.sans(14, .medium)).foregroundColor(Theme.text)
+                                Text(r.desc).font(WF.sans(12)).foregroundColor(Theme.text2).lineLimit(1)
                             }
                             Spacer()
-                            Text(st.latest ?? "").font(.caption2).foregroundColor(Theme.muted)
-                        }
-                    }.listRowBackground(Theme.surface)
+                            Text("›").foregroundColor(Theme.text3)
+                        }.padding(.horizontal, 16).padding(.vertical, 12).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                    if i < rows.count - 1 { Divider().overlay(Theme.border).padding(.leading, 60) }
                 }
-            }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-            .refreshable { await reload() }
+            }.card(pad: 0)
         }
-        .navigationTitle(L("more.products"))
     }
 }
-struct StationView: View {
-    @EnvironmentObject var state: AppState
-    let station: ProductStation
-    let base: String
+struct PluginRow: View {
+    let plugin: UserPlugin
+    let open: () -> Void
+    let remove: () -> Void
     var body: some View {
-        List {
-            ForEach(station.dates) { d in
-                Section {
-                    ForEach(d.videos) { v in
-                        if let url = state.api.mediaURL(v.rel, base: base) {
-                            NavigationLink { VideoScreen(url: url, title: d.title ?? v.name) } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: v.name.contains("short") ? "rectangle.portrait" : "play.rectangle").foregroundColor(Theme.primary)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(v.name).font(.footnote).foregroundColor(Theme.text).lineLimit(1)
-                                        Text(Fmt.bytes(v.size ?? 0)).font(.caption2).foregroundColor(Theme.muted)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if !d.images.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(d.images) { im in
-                                    if let url = state.api.mediaURL(im.rel, base: base) {
-                                        NavigationLink { ImageScreen(url: url) } label: {
-                                            AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { Theme.surface2 }
-                                                .frame(width: 128, height: 72).clipShape(RoundedRectangle(cornerRadius: 8))
-                                        }
-                                    }
-                                }
-                            }
-                        }.listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
-                    }
-                } header: {
+        HStack(spacing: 12) {
+            Button(action: open) {
+                HStack(spacing: 12) {
+                    Text(plugin.page == "products" ? "🎞️" : "🧩").font(.system(size: 20)).frame(width: 32)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(d.date)
-                        if let t = d.title, !t.isEmpty { Text(t).font(.caption).foregroundColor(Theme.text).textCase(nil) }
+                        Text(plugin.name).font(WF.sans(14, .medium)).foregroundColor(Theme.text)
+                        Text(plugin.page == "products" ? L("控制台內建頁") : (plugin.url ?? "")).font(WF.sans(12)).foregroundColor(Theme.text2).lineLimit(1)
                     }
-                }.listRowBackground(Theme.surface)
-            }
-        }
-        .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-        .navigationTitle(station.name).navigationBarTitleDisplayMode(.inline)
-    }
-}
-struct VideoScreen: View {
-    let url: URL
-    let title: String
-    @State private var player: AVPlayer?
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            if let player {
-                VideoPlayer(player: player).ignoresSafeArea()
-            }
-        }
-        .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .onAppear {
-            let p = AVPlayer(url: url)
-            try? AVAudioSession.sharedInstance().setCategory(.playback)
-            player = p; p.play()
-        }
-        .onDisappear { player?.pause(); player = nil }
-    }
-}
-struct ImageScreen: View {
-    let url: URL
-    @State private var scale: CGFloat = 1
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            AsyncImage(url: url) { $0.resizable().scaledToFit() } placeholder: { ProgressView() }
-                .scaleEffect(scale)
-                .gesture(MagnificationGesture().onChanged { scale = max(1, $0) }.onEnded { _ in withAnimation { scale = 1 } })
-        }
-        .ignoresSafeArea()
-        .toolbarBackground(.hidden, for: .navigationBar)
+                    Spacer()
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            Button(action: remove) { Text("✕").font(WF.sans(13)).foregroundColor(Theme.text3).frame(width: 28, height: 28) }
+        }.padding(.horizontal, 16).padding(.vertical, 12)
     }
 }
 
-// MARK: - 看板
-struct BoardView: View {
-    var body: some View {
-        Loader(path: "/api/board/projects") { (p: BoardProjects, reload) in
-            List {
-                ForEach(p.projects ?? []) { pr in
-                    NavigationLink { BoardTasksView(project: pr) } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack { Text(pr.name ?? pr.id).font(.body.weight(.medium)).foregroundColor(Theme.text); Spacer(); Pill(text: pr.status ?? "") }
-                            if let d = pr.description, !d.isEmpty { Text(d).font(.caption).foregroundColor(Theme.muted).lineLimit(2) }
-                            ProgressView(value: min(1, (pr.progress ?? 0) / 100)).tint(Theme.primary)
-                            if let c = pr.task_counts {
-                                Text(["todo", "doing", "blocked", "review", "done"].compactMap { k in c[k].map { "\(k) \($0)" } }.joined(separator: " · ")).font(.caption2).foregroundColor(Theme.muted)
-                            }
-                        }
-                    }.listRowBackground(Theme.surface)
-                }
-            }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-            .overlay { if (p.projects ?? []).isEmpty { EmptyHint(text: L("common.none")) } }
-            .refreshable { await reload() }
-        }.navigationTitle(L("more.board"))
-    }
-}
-struct BoardTasksView: View {
-    let project: BoardProject
-    var body: some View {
-        Loader(path: "/api/board/tasks?project_id=\(project.id)") { (t: BoardTasks, reload) in
-            List {
-                ForEach(t.tasks ?? []) { task in
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack { Text(task.title ?? "").font(.subheadline.weight(.medium)).foregroundColor(Theme.text); Spacer(); Pill(text: task.status ?? "", color: task.status == "done" ? Theme.success : (task.status == "blocked" ? Theme.danger : Theme.accent)) }
-                        HStack { Text(task.assignee ?? "").font(.caption).foregroundColor(Theme.muted); Spacer(); Text("\(Int(task.percent ?? 0))%").font(.caption).foregroundColor(Theme.muted) }
-                        if let u = task.last_update { Text("\(u.author ?? ""): \(u.content ?? "")").font(.caption2).foregroundColor(Theme.muted).lineLimit(2) }
-                    }.listRowBackground(Theme.surface)
-                }
-            }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-            .refreshable { await reload() }
-        }.navigationTitle(project.name ?? L("board.tasks")).navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-// MARK: - Discord
-struct DiscordView: View {
-    var body: some View {
-        Loader(path: "/api/discord/channels") { (c: DiscordChannels, _) in
-            List {
-                ForEach(c.channels ?? []) { ch in
-                    NavigationLink { DiscordChannelView(channel: ch) } label: { Label(ch.name ?? ch.id, systemImage: "number") }.listRowBackground(Theme.surface)
-                }
-            }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-            .overlay { if (c.channels ?? []).isEmpty { EmptyHint(text: L("common.none")) } }
-        }.navigationTitle(L("more.discord"))
-    }
-}
-struct DiscordChannelView: View {
+// 刪除帳號（ModalSheet：警語、密碼、確認輸入「刪除」、永久刪除我的帳號）
+struct DeleteAccountSheet: View {
     @EnvironmentObject var state: AppState
-    let channel: DiscordChannel
-    @State private var text = ""
-    @State private var err: String?
+    @EnvironmentObject var nav: Nav
+    @Environment(\.dismiss) var dismiss
+    @State private var pw = ""
+    @State private var confirm = ""
+    @State private var busy = false
     var body: some View {
-        Loader(path: "/api/discord/messages/\(channel.id)?limit=50") { (m: DiscordMessages, reload) in
-            VStack(spacing: 0) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(m.messages ?? []) { msg in
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack { Text(msg.author?.global_name ?? msg.author?.username ?? "").font(.caption.weight(.semibold)).foregroundColor(Theme.accent); Spacer(); Text(Fmt.iso(msg.timestamp ?? "")).font(.caption2).foregroundColor(Theme.muted) }
-                                Text(msg.content ?? "").font(.subheadline).foregroundColor(Theme.text).textSelection(.enabled)
-                            }.card(pad: 10)
-                        }
-                    }.padding(12)
-                }.refreshable { await reload() }
-                HStack {
-                    TextField(L("dc.send"), text: $text, axis: .vertical).lineLimit(1...4).padding(10).background(Theme.surface2).cornerRadius(12).foregroundColor(Theme.text)
-                    Button {
-                        let t = text; text = ""
-                        Task {
-                            do { let _: OkResponse = try await state.api.request("/api/discord/send", method: "POST", body: ["channel_id": channel.id, "content": t]); Haptic.success(); await reload() }
-                            catch { err = error.localizedDescription }
-                        }
-                    } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 28)) }.disabled(text.isEmpty)
-                }.padding(10).background(Theme.bg)
-                if let err { Text(err).font(.caption2).foregroundColor(Theme.danger) }
-            }.screenBackground()
-        }.navigationTitle(channel.name ?? "").navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-// MARK: - 知識庫
-struct KnowledgeView: View {
-    @EnvironmentObject var state: AppState
-    @State private var query = ""
-    var body: some View {
-        Loader(path: "/api/knowledge/files") { (k: KnowledgeFiles, reload) in
-            let files = (k.files ?? []).filter { $0.type != "folder" && !$0.name.hasPrefix("_") && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }
-            List {
-                ForEach(files) { f in
-                    NavigationLink { KnowledgeReadView(file: f) } label: {
-                        HStack { Text(f.name).font(.footnote).foregroundColor(Theme.text).lineLimit(1); Spacer(); Text(f.agent ?? "").font(.caption2).foregroundColor(Theme.muted); Text(Fmt.bytes(f.size ?? 0)).font(.caption2).foregroundColor(Theme.muted) }
-                    }.listRowBackground(Theme.surface)
-                }
-            }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-            .searchable(text: $query)
-            .refreshable { await reload() }
-        }.navigationTitle(L("more.knowledge"))
-    }
-}
-struct KnowledgeReadView: View {
-    @EnvironmentObject var state: AppState
-    let file: KnowledgeFile
-    @State private var text = ""
-    var body: some View {
-        ScrollView { Text(text).font(.system(.footnote, design: .monospaced)).foregroundColor(Theme.text).frame(maxWidth: .infinity, alignment: .leading).padding(14).textSelection(.enabled) }
-            .screenBackground().navigationTitle(file.name).navigationBarTitleDisplayMode(.inline)
-            .task {
-                let q = "agent=\(file.agent ?? "")&path=\((file.path ?? file.name).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-                if let d = try? await state.api.requestData("/api/knowledge/read?\(q)") {
-                    if let r = try? JSONDecoder().decode(KnowledgeRead.self, from: d), let c = r.content { text = c }
-                    else { text = String(data: d, encoding: .utf8) ?? "" }
-                } else { text = L("common.error") }
-            }
-    }
-}
-
-// MARK: - 備份
-struct BackupView: View {
-    @EnvironmentObject var state: AppState
-    @State private var status: BackupStatus?
-    @State private var msg: String?
-    @State private var confirm: (String, () -> Void)?
-    @State private var showConfirm = false
-    var body: some View {
-        Loader(path: "/api/backup/list") { (b: BackupList, reload) in
-            List {
-                Section {
-                    HStack { Text(L("bk.status")); Spacer(); Text(status.map { "\(($0.running ?? false) ? "ON" : "OFF") · \(L("bk.every")) \(Int($0.interval_hours ?? 0))\(L("bk.hours")) · \($0.total_backups ?? 0) \(L("bk.total"))" } ?? "…").font(.caption).foregroundColor(Theme.muted) }
-                    Button { Task { do { let _: OkResponse = try await state.api.request("/api/backup/create", method: "POST", body: ["label": "iphone"], timeout: 300); Haptic.success(); await reload() } catch { msg = error.localizedDescription } } } label: { Label(L("bk.create"), systemImage: "plus") }
-                    if let msg { Text(msg).font(.caption).foregroundColor(Theme.danger) }
-                }.listRowBackground(Theme.surface)
-                Section {
-                    ForEach(b.backups ?? []) { bk in
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack { Text(bk.label ?? "").font(.subheadline.weight(.medium)).foregroundColor(Theme.text); Spacer(); Text(bk.timestamp ?? "").font(.caption).foregroundColor(Theme.muted) }
-                            Text("\(bk.agents ?? 0) agents · \(bk.files ?? 0) files · \(String(format: "%.0f", bk.size_mb ?? 0)) MB").font(.caption2).foregroundColor(Theme.muted)
-                        }
-                        .swipeActions {
-                            Button(role: .destructive) { confirm = (L("bk.confirmdelete"), { Task { do { let _: OkResponse = try await state.api.request("/api/backup/delete", method: "POST", body: ["timestamp": bk.timestamp ?? ""]); await reload() } catch { msg = error.localizedDescription } } }); showConfirm = true } label: { Label(L("bk.delete"), systemImage: "trash") }
-                            Button { confirm = (L("bk.confirmrestore"), { Task { do { let _: OkResponse = try await state.api.request("/api/backup/restore", method: "POST", body: ["timestamp": bk.timestamp ?? ""], timeout: 300); Haptic.success() } catch { msg = error.localizedDescription } } }); showConfirm = true } label: { Label(L("bk.restore"), systemImage: "arrow.counterclockwise") }.tint(Theme.warning)
-                        }
-                        .listRowBackground(Theme.surface)
-                    }
-                }
-            }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-            .refreshable { await reload() }
+        VStack(spacing: 0) {
+            SheetHeader(title: L("刪除帳號")) { dismiss() }
+            VStack(alignment: .leading, spacing: 12) {
+                Text(L("這會永久刪除你的帳號與登入資料，無法復原。員工與資料檔仍留在這台電腦上。")).font(WF.sans(13)).foregroundColor(Theme.danger)
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Color(hex: 0xb5341a, alpha: 0.08)).clipShape(RoundedRectangle(cornerRadius: 10))
+                Text(L("密碼")).font(WF.sans(12, .semibold)).foregroundColor(Theme.text2)
+                SecureField(L("請輸入密碼"), text: $pw).inputWarm()
+                Text(L("確認（請輸入「刪除」二字）")).font(WF.sans(12, .semibold)).foregroundColor(Theme.text2)
+                TextField(L("刪除"), text: $confirm).inputWarm()
+                Button(busy ? "…" : L("永久刪除我的帳號")) { doDelete() }
+                    .buttonStyle(WarmButtonStyle(padV: 12, full: true, bg: Theme.danger))
+                    .disabled(busy || pw.isEmpty || (confirm != "刪除" && confirm.lowercased() != "delete"))
+            }.padding(20)
+            Spacer()
         }
-        .navigationTitle(L("more.backup"))
-        .task { status = try? await state.api.request("/api/backup/status") }
-        .confirmationDialog(confirm?.0 ?? "", isPresented: $showConfirm, titleVisibility: .visible) {
-            Button(L("common.confirm"), role: .destructive) { confirm?.1() }
+        .background(Theme.surface.ignoresSafeArea())
+        .presentationDetents([.medium, .large])
+    }
+    private func doDelete() {
+        busy = true
+        Task {
+            do {
+                let _: OkResponse = try await state.api.request("/api/auth/account", method: "DELETE", body: ["password": pw])
+                dismiss(); state.logout()
+            } catch { nav.show(error.localizedDescription, "error") }
+            busy = false
         }
     }
 }
 
-// MARK: - 審計
-struct AuditView: View {
-    @State private var filter = ""
-    var body: some View {
-        Loader(path: "/api/audit/list?limit=300") { (a: AuditList, reload) in
-            let evs = (a.events ?? []).filter { filter.isEmpty || ($0.actor ?? "").localizedCaseInsensitiveContains(filter) || ($0.action ?? "").localizedCaseInsensitiveContains(filter) }
-            List {
-                ForEach(evs) { e in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack { Text(e.action ?? "").font(.footnote.weight(.semibold)).foregroundColor(Theme.text); Spacer(); Pill(text: e.result ?? "", color: e.result == "ok" ? Theme.success : Theme.danger) }
-                        HStack { Text(e.actor ?? "").font(.caption).foregroundColor(Theme.accent); Text(e.target ?? "").font(.caption).foregroundColor(Theme.muted).lineLimit(1); Spacer(); Text(Fmt.iso(e.ts ?? "")).font(.caption2).foregroundColor(Theme.muted) }
-                    }.listRowBackground(Theme.surface)
-                }
-            }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-            .searchable(text: $filter, prompt: L("au.filter"))
-            .refreshable { await reload() }
-        }.navigationTitle(L("more.audit"))
-    }
-}
-
-// MARK: - 管理員設定（用戶）
-struct UsersView: View {
-    @EnvironmentObject var state: AppState
-    @State private var showCreate = false
-    @State private var nu = ""; @State private var np = ""; @State private var nr = "user"
-    @State private var msg: String?
-    @State private var resetTarget: DashUser?
-    @State private var resetPass = ""
-    var body: some View {
-        Loader(path: "/api/users/list") { (u: UsersList, reload) in
-            List {
-                if let msg { Text(msg).font(.caption).foregroundColor(Theme.danger) }
-                ForEach(u.users ?? []) { user in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack { Text(user.username).font(.subheadline.weight(.medium)).foregroundColor(Theme.text); Pill(text: user.role ?? "", color: user.role == "admin" ? Theme.primary : Theme.accent); Spacer(); if user.status == "suspended" { Pill(text: L("us.suspend"), color: Theme.danger) } }
-                        Text("last: \(Fmt.iso(user.last_login ?? ""))").font(.caption2).foregroundColor(Theme.muted)
-                    }
-                    .swipeActions {
-                        if user.username != state.username {
-                            Button(role: .destructive) { Task { do { let _: OkResponse = try await state.api.request("/api/users/\(user.username)", method: "DELETE"); await reload() } catch { msg = error.localizedDescription } } } label: { Label("Del", systemImage: "trash") }
-                            Button { Task { do { let _: OkResponse = try await state.api.request("/api/users/\(user.username)/status", method: "POST", body: ["status": user.status == "suspended" ? "active" : "suspended"]); await reload() } catch { msg = error.localizedDescription } } } label: { Label(user.status == "suspended" ? L("us.activate") : L("us.suspend"), systemImage: "hand.raised") }.tint(Theme.warning)
-                        }
-                        Button { resetTarget = user } label: { Label(L("us.reset"), systemImage: "key") }.tint(Theme.accent)
-                    }
-                    .listRowBackground(Theme.surface)
-                }
-            }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-            .refreshable { await reload() }
-            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button { showCreate = true } label: { Image(systemName: "person.badge.plus") } } }
-            .alert(L("us.create"), isPresented: $showCreate) {
-                TextField(L("login.user"), text: $nu).textInputAutocapitalization(.never)
-                SecureField(L("login.pass"), text: $np)
-                Button(L("common.cancel"), role: .cancel) {}
-                Button(L("chat.create")) { Task { do { let _: OkResponse = try await state.api.request("/api/users/create", method: "POST", body: ["username": nu, "password": np, "role": nr]); nu = ""; np = ""; await reload() } catch { msg = error.localizedDescription } } }
-            }
-            .alert(L("us.reset"), isPresented: Binding(get: { resetTarget != nil }, set: { if !$0 { resetTarget = nil } })) {
-                SecureField(L("us.newpass"), text: $resetPass)
-                Button(L("common.cancel"), role: .cancel) {}
-                Button(L("common.ok")) { if let t = resetTarget { Task { do { let _: OkResponse = try await state.api.request("/api/users/\(t.username)/reset-password", method: "POST", body: ["new_password": resetPass]); resetPass = ""; Haptic.success() } catch { msg = error.localizedDescription } } } }
-            }
-        }.navigationTitle(L("more.users"))
-    }
-}
-
-// MARK: - 市集授權後台（訂單＋買家）
-struct StoreAdminView: View {
-    var body: some View {
-        List {
-            Section("Orders") {
-                Loader(path: "/api/store/orders") { (o: StoreOrders, _) in
-                    ForEach(o.orders ?? [], id: \.identity) { od in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack { Text(od.product ?? od.identity).font(.footnote.weight(.medium)).foregroundColor(Theme.text); Spacer(); Pill(text: od.status ?? "") }
-                            Text("\(od.buyer ?? "") · \(Fmt.iso(od.created_at ?? ""))").font(.caption2).foregroundColor(Theme.muted)
-                        }
-                    }
-                    if (o.orders ?? []).isEmpty { Text(L("common.none")).font(.caption).foregroundColor(Theme.muted) }
-                }
-            }.listRowBackground(Theme.surface)
-            Section("Buyers") {
-                Loader(path: "/api/store/op/buyers") { (b: StoreBuyers, _) in
-                    ForEach(b.buyers ?? []) { by in
-                        HStack { Text(by.email ?? by.id).font(.footnote).foregroundColor(Theme.text); Spacer(); Pill(text: by.status ?? "") }
-                    }
-                    if (b.buyers ?? []).isEmpty { Text(L("common.none")).font(.caption).foregroundColor(Theme.muted) }
-                }
-            }.listRowBackground(Theme.surface)
-        }
-        .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-        .navigationTitle(L("more.store"))
-    }
-}
-
-// MARK: - 設定
-struct SettingsView: View {
+// 原生 app 專屬設定（Face ID／觸覺／背景更新／派工目標／推播／伺服器／版本／快取）
+struct AppSettingsSheet: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var l10n: L10n
+    @Environment(\.dismiss) var dismiss
     @State private var cacheSize = DiskCache.sizeBytes
+    var version: String {
+        let d = Bundle.main.infoDictionary
+        return "\(d?["CFBundleShortVersionString"] as? String ?? "") (\(d?["CFBundleVersion"] as? String ?? ""))"
+    }
     var body: some View {
-        List {
-            Section {
-                Picker(L("more.lang"), selection: $l10n.lang) { Text("繁體中文").tag("zh"); Text("English").tag("en") }
-                Toggle(L("more.faceid"), isOn: $state.faceIDEnabled)
-                Toggle(L("more.haptics"), isOn: $state.hapticsEnabled)
-                Toggle(L("more.bgrefresh"), isOn: $state.bgRefreshEnabled).onChange(of: state.bgRefreshEnabled) { on in if on { state.scheduleBackgroundRefresh() } }
-                Picker(L("more.dispatch"), selection: $state.dispatchAgent) { ForEach(state.sortedAgents) { a in Text(a.name).tag(a.name) } }
-            }.listRowBackground(Theme.surface)
-            Section {
-                HStack { Text(L("more.push")); Spacer(); Text(state.pushStatus).foregroundColor(Theme.muted) }
-                HStack { Text(L("more.server")); Spacer(); Text(state.baseString).font(.caption).foregroundColor(Theme.muted).lineLimit(1) }
-                HStack { Text(L("more.version")); Spacer(); Text("\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""))").foregroundColor(Theme.muted) }
-                HStack { Text(L("more.cache")); Spacer(); Text(Fmt.bytes(cacheSize)).foregroundColor(Theme.muted) }
-                if state.lastBackgroundRefresh > 0 { HStack { Text(L("more.bgrefresh")); Spacer(); Text(Fmt.when(state.lastBackgroundRefresh)).foregroundColor(Theme.muted) } }
-                Button(L("more.cache.clear")) { DiskCache.clear(); cacheSize = 0; Haptic.medium() }
-            }.listRowBackground(Theme.surface)
+        VStack(spacing: 0) {
+            SheetHeader(title: L("App 設定")) { dismiss() }
+            List {
+                Section {
+                    Toggle(L("Face ID 鎖定"), isOn: $state.faceIDEnabled)
+                    Toggle(L("觸覺回饋"), isOn: $state.hapticsEnabled)
+                    Toggle(L("背景更新"), isOn: $state.bgRefreshEnabled)
+                    Picker(L("分享派工目標員工"), selection: $state.dispatchAgent) { ForEach(state.sortedAgents) { a in Text(a.name).tag(a.name) } }
+                }.listRowBackground(Theme.surface)
+                Section {
+                    HStack { Text(L("推播通知")); Spacer(); Text(state.pushStatus).foregroundColor(Theme.text2) }
+                    HStack { Text(L("伺服器")); Spacer(); Text(state.baseString).font(WF.sans(12)).foregroundColor(Theme.text2).lineLimit(1) }
+                    HStack { Text(L("App 版本")); Spacer(); Text(version).foregroundColor(Theme.text2) }
+                    HStack { Text(L("離線快取")); Spacer(); Text(Fmt.bytes(cacheSize)).foregroundColor(Theme.text2) }
+                    Button(L("清除快取")) { DiskCache.clear(); cacheSize = 0; Haptic.medium() }
+                }.listRowBackground(Theme.surface)
+            }
+            .listStyle(.insetGrouped).scrollContentBackground(.hidden)
+            .onChange(of: state.bgRefreshEnabled) { on in if on { state.scheduleBackgroundRefresh() } }
         }
-        .listStyle(.insetGrouped).scrollContentBackground(.hidden).screenBackground()
-        .navigationTitle(L("more.settings"))
+        .background(Theme.bg.ignoresSafeArea())
     }
 }
