@@ -151,11 +151,9 @@ struct MoreView: View {
         }.card()
     }
     private func loadPlugins() async {
-        if let r: UserPluginsResponse = try? await state.api.request("/api/user-plugins"), let p = r.plugins, !p.isEmpty {
-            plugins = internalMode ? p : p.filter { $0.proxied != true }
-        } else {
-            plugins = internalMode ? Self.defaultPlugins : Self.defaultPlugins.filter { $0.proxied != true }
-        }
+        // 同網頁：伺服器有存就照存的顯示；沒存才用預設兩顆（GPU 排程器＋影片成品區）
+        if let r: UserPluginsResponse = try? await state.api.request("/api/user-plugins"), let p = r.plugins, !p.isEmpty { plugins = p }
+        else { plugins = Self.defaultPlugins }
         pluginsLoaded = true
     }
     private func savePlugins() async {
@@ -279,7 +277,11 @@ struct AppSettingsSheet: View {
                     Picker(L("分享派工目標員工"), selection: $state.dispatchAgent) { ForEach(state.sortedAgents) { a in Text(a.name).tag(a.name) } }
                 }.listRowBackground(Theme.surface)
                 Section {
-                    HStack { Text(L("推播通知")); Spacer(); Text(state.pushStatus).foregroundColor(Theme.text2) }
+                    Button {
+                        if let u = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(u) }
+                    } label: {
+                        HStack { Text(L("推播通知")).foregroundColor(Theme.text); Spacer(); Text(state.pushStatus).foregroundColor(Theme.text2); Text("›").foregroundColor(Theme.text3) }
+                    }
                     HStack { Text(L("伺服器")); Spacer(); Text(state.baseString).font(WF.sans(12)).foregroundColor(Theme.text2).lineLimit(1) }
                     HStack { Text(L("App 版本")); Spacer(); Text(version).foregroundColor(Theme.text2) }
                     HStack { Text(L("離線快取")); Spacer(); Text(Fmt.bytes(cacheSize)).foregroundColor(Theme.text2) }
