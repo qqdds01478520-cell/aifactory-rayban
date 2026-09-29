@@ -1,4 +1,4 @@
-# XcodeGen 規格 — AI工廠商用控制台 原生 iOS app（SwiftUI 直打 8896 API；2026-09-29 v2.0 起原生；終端機用 WKWebView 跑同一份 xterm.js）
+# XcodeGen 規格 — AI工廠商用控制台 iOS app v3.0（董事長 2026-09-29 TG10182「一律網頁版＋新功能加回去＋滿版」：WKWebView 滿版載 8896 網頁原碼，原生殼只做 Face ID／推播／觸覺／左滑返回／背景更新／分享派工）
 name: AIFactoryDashboard
 options:
   bundleIdPrefix: com.aifactory
@@ -10,9 +10,6 @@ targets:
     platform: iOS
     sources:
       - Sources
-      - path: Resources/term
-        type: folder
-        buildPhase: resources
     entitlements:
       path: AIFactoryDashboard.entitlements
       properties:
@@ -22,8 +19,8 @@ targets:
       properties:
         CFBundleDisplayName: AI工廠
         RelayAuthKey: $(RELAY_AUTH_KEY)
-        CFBundleVersion: "7"
-        CFBundleShortVersionString: "2.0"
+        CFBundleVersion: "8"
+        CFBundleShortVersionString: "3.0"
         UILaunchScreen:
           UIColorName: ""
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
