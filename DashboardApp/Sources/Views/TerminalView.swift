@@ -8,17 +8,15 @@ struct TerminalView: View {
     @EnvironmentObject var l10n: L10n
     @State private var agent: String = ""
     @State private var lines: [String] = []
-    @State private var rawTotal = 0
-    @State private var rawText = ""
     @State private var input = ""
     @State private var rawMode = false
     @State private var showHistory = false
     @State private var showMoreKeys = false
-    @State private var connected = false
     @State private var err: String?
     @State private var urls: [String] = []
     @State private var poller: Task<Void, Never>?
     @State private var refreshCount = 0
+    @StateObject private var term = TermSession()   // 網頁版 xterm＋WS 搬進來的傳輸層
     @FocusState private var focused: Bool
 
     private let termBg = Color(hex: 0x1c1917)
@@ -44,12 +42,16 @@ struct TerminalView: View {
         .onAppear {
             if let p = nav.terminalAgent { agent = p; nav.terminalAgent = nil }
             if agent.isEmpty { agent = state.sortedAgents.first(where: { $0.isRunning })?.name ?? state.sortedAgents.first?.name ?? "" }
+            term.api = state.api
+            term.onCopy = { _ in nav.show(L("已複製"), "success", ms: 1200) }
+            term.start(agent: agent)
             startPolling()
         }
-        .onDisappear { poller?.cancel() }
+        .onDisappear { poller?.cancel(); term.stop() }
         .onChange(of: nav.terminalAgent) { p in if let p { agent = p; nav.terminalAgent = nil } }
-        .onChange(of: agent) { _ in lines = []; rawText = ""; rawTotal = 0; urls = []; connected = false; startPolling() }
-        .onChange(of: refreshCount) { _ in lines = []; rawText = ""; rawTotal = 0; connected = false; startPolling() }
+        .onChange(of: agent) { _ in lines = []; urls = []; term.start(agent: agent); startPolling() }
+        .onChange(of: refreshCount) { _ in lines = []; term.start(agent: agent); startPolling() }
+        .onChange(of: showHistory) { _ in lines = []; startPolling() }
     }
 
     // MARK: 終端卡
@@ -71,10 +73,13 @@ struct TerminalView: View {
                     }
                 }.padding(.leading, 8)
                 Spacer()
-                Circle().fill(connected ? Color(hex: 0x4caf50) : Color(hex: 0x555555)).frame(width: 6, height: 6)
-                Text(connected ? "HTTP" : L("離線")).font(WF.mono(10)).foregroundColor(Color(hex: 0x78716c))
+                Circle().fill(term.connected ? Color(hex: 0x4caf50) : Color(hex: 0x555555)).frame(width: 6, height: 6)
+                Text(term.connected ? (term.mode == "ws" ? "WS" : "HTTP") : L("離線")).font(WF.mono(10)).foregroundColor(Color(hex: 0x78716c))
                 headBtn("📜 " + L("歷史"), active: showHistory) { showHistory.toggle(); Haptic.tap() }
-                headBtn("📋", active: false) { UIPasteboard.general.string = fullText; nav.show(L("已複製"), "success", ms: 1200) }
+                headBtn("📋", active: false) {
+                    if showHistory { UIPasteboard.general.string = lines.joined(separator: "\n"); nav.show(L("已複製"), "success", ms: 1200) }
+                    else { term.copyAll { t in UIPasteboard.general.string = t; nav.show(L("已複製"), "success", ms: 1200) } }
+                }
                 headBtn("🔄", active: false) { refreshCount += 1; Haptic.tap() }
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
@@ -86,8 +91,14 @@ struct TerminalView: View {
                     Text("💻").font(.system(size: 32))
                     Text(L("選擇一個 Agent 開始連線")).font(WF.mono(13)).foregroundColor(Color(hex: 0x78716c))
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if showHistory {
+                historyPane
             } else {
-                output
+                // 即時畫面＝網頁同一份 xterm.js；鍵盤直接敲進 xterm 也走 WS，WS 不在就走 HTTP 輸入
+                TermWebPane(session: term) { data in
+                    if !term.sendInput(data) { Task { await sendRaw(data) } }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -104,19 +115,18 @@ struct TerminalView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }
-    private var fullText: String { lines.isEmpty ? rawText : lines.joined(separator: "\n") }
-
-    private var output: some View {
+    // 📜 歷史＝網頁同款：伺服器 pyte 重建的乾淨逐字稿（/api/terminal/rendered），原生可捲可選字可複製
+    private var historyPane: some View {
         ScrollViewReader { proxy in
-            ScrollView([.vertical, .horizontal], showsIndicators: showHistory) {
+            ScrollView([.vertical, .horizontal], showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 0) {
-                    if lines.isEmpty && rawText.isEmpty {
-                        Text(err ?? L("連線中…")).font(WF.mono(12.5)).foregroundColor(Color(hex: 0x78716c)).padding(8)
+                    if lines.isEmpty {
+                        Text(err ?? L("載入歷史…")).font(WF.mono(12.5)).foregroundColor(Color(hex: 0x78716c)).padding(8)
                     } else {
-                        Text(fullText.isEmpty ? " " : fullText)
+                        Text(lines.joined(separator: "\n"))
                             .font(WF.mono(12.5)).foregroundColor(Color(hex: 0xe7e5e4))
                             .lineSpacing(3)
-                            .fixedSize(horizontal: showHistory, vertical: false)
+                            .fixedSize(horizontal: true, vertical: false)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
                     }
@@ -124,8 +134,7 @@ struct TerminalView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
             }
-            .onChange(of: lines.count) { _ in if !showHistory { proxy.scrollTo("bottom", anchor: .bottom) } }
-            .onChange(of: rawText) { _ in if !showHistory { proxy.scrollTo("bottom", anchor: .bottom) } }
+            .onChange(of: lines.count) { _ in proxy.scrollTo("bottom", anchor: .bottom) }
             .onTapGesture { focused = false }
         }
     }
@@ -229,20 +238,22 @@ struct TerminalView: View {
         Task { await sendRaw(txt + "\r") }
     }
     private func sendRaw(_ seq: String) async {
+        if term.sendInput(seq) { return }   // WS 活著就走網頁同一條 WS input
         do {
             let _: OkResponse = try await state.api.request("/api/terminal/input", method: "POST", body: ["name": agent, "text": seq, "group_reply": false])
         } catch { nav.show(error.localizedDescription, "error") }
     }
 
-    // MARK: 輪詢（rendered 1.5s；退 raw buffer 去 ANSI）
+    // MARK: 輪詢（登入網址 6s；📜 歷史開著時 rendered 逐字稿 1.5s，只留尾 1200 行免卡主執行緒）
     private func startPolling() {
         poller?.cancel()
         guard !agent.isEmpty else { return }
         let name = agent
+        let history = showHistory
         poller = Task {
             var tick = 0
             while !Task.isCancelled {
-                await pollOnce(name)
+                if history { await pollHistory(name) }
                 if tick % 4 == 0 {
                     if let u: TerminalURLs = try? await state.api.request("/api/terminal/urls/\(name)") {
                         let fresh = (u.urls ?? []).compactMap { $0.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) }.filter { $0.hasPrefix("http") }
@@ -254,24 +265,14 @@ struct TerminalView: View {
             }
         }
     }
-    private func pollOnce(_ name: String) async {
+    private func pollHistory(_ name: String) async {
         do {
             let r: TerminalBuffer = try await state.api.request("/api/terminal/rendered/\(name)")
-            if let l = r.lines {
-                // 伺服器一次回 5000 行（~200KB）；手機只留尾段，否則 SwiftUI 排版 5000 行卡死主執行緒（董 9/29 實機「連線中」不動）
-                let keep = Array(l.suffix(showHistory ? 1200 : 300))
-                if keep != lines { lines = keep }
-                connected = true; err = nil
-                return
-            }
-            let b: TerminalBuffer = try await state.api.request("/api/terminal/buffer/\(name)?after=\(rawTotal)")
-            if b.source == "none" { err = L("此員工未在運行，先到員工頁啟動"); connected = false; return }
-            let chunk = (b.lines ?? []).joined()
-            if !chunk.isEmpty { rawText = String((rawText + ANSI.strip(chunk)).suffix(30_000)) }
-            rawTotal = b.total ?? rawTotal
-            connected = true; err = nil
+            let keep = Array((r.lines ?? []).suffix(1200))
+            if keep != lines { lines = keep }
+            err = nil
         } catch let e as APIError where e.status == 404 {
-            err = L("此員工未在運行，先到員工頁啟動"); connected = false
-        } catch { err = error.localizedDescription; connected = false }
+            err = L("此員工未在運行，先到員工頁啟動")
+        } catch { err = error.localizedDescription }
     }
 }

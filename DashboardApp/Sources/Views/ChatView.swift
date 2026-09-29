@@ -65,11 +65,11 @@ struct ChatView: View {
             switch screen {
             case .list: listPage
             case .room:
-                if let g = current { ChatRoomView(group: g, onBack: { go(.list) }, onInfo: { go(.info) }).transition(.move(edge: .trailing)) }
+                if let g = current { ChatRoomView(group: g, onBack: { go(.list) }, onInfo: { go(.info) }).swipeBack { go(.list) }.transition(.move(edge: .trailing)) }
             case .info:
-                if let g = current { GroupInfoView(group: g, onBack: { go(.room) }, onDeleted: { selected = nil; go(.list) }).transition(.move(edge: .trailing)) }
+                if let g = current { GroupInfoView(group: g, onBack: { go(.room) }, onDeleted: { selected = nil; go(.list) }).swipeBack { go(.room) }.transition(.move(edge: .trailing)) }
             case .create:
-                CreateGroupView(onBack: { go(.list) }, onCreated: { g in selected = g; go(.room) }).transition(.move(edge: .trailing))
+                CreateGroupView(onBack: { go(.list) }, onCreated: { g in selected = g; go(.room) }).swipeBack { go(.list) }.transition(.move(edge: .trailing))
             }
         }
         .animation(.easeInOut(duration: 0.2), value: screen)

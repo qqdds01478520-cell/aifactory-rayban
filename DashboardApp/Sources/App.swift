@@ -141,9 +141,9 @@ struct MainTabView: View {
     @ViewBuilder
     private var content: some View {
         if let p = nav.plugin {
-            PluginPage(plugin: p)
+            PluginPage(plugin: p).swipeBack { nav.back() }
         } else if let s = nav.sub {
-            SubPageHost(page: s)
+            SubPageHost(page: s).swipeBack { nav.back() }
         } else {
             switch nav.tab {
             case .overview: OverviewView()

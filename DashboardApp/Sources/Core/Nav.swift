@@ -52,13 +52,14 @@ final class Nav: ObservableObject {
     var tabBarHidden: Bool { sub != nil || plugin != nil || chatRoom }
 
     func go(_ t: Tab) { withAnimation(.easeInOut(duration: 0.15)) { sub = nil; plugin = nil; tab = t } }
-    func open(_ s: SubPage) { withAnimation(.easeInOut(duration: 0.15)) { sub = s } }
+    func open(_ s: SubPage) { Haptic.tap(); withAnimation(.easeInOut(duration: 0.15)) { sub = s } }
     func openPlugin(_ p: UserPlugin) {
+        Haptic.tap()
         if p.page == "products" { open(.products); return }
         withAnimation(.easeInOut(duration: 0.15)) { plugin = p }
     }
     // 網頁：子頁返回 → 'more'
-    func back() { withAnimation(.easeInOut(duration: 0.15)) { sub = nil; plugin = nil; tab = .more } }
+    func back() { Haptic.tap(); withAnimation(.easeInOut(duration: 0.15)) { sub = nil; plugin = nil; tab = .more } }
     func openTerminal(_ agent: String) { terminalAgent = agent; go(.terminal) }
 
     func show(_ text: String, _ kind: String = "info", ms: Int = 2500) {

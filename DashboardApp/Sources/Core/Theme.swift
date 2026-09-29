@@ -415,11 +415,13 @@ struct Loader<T: Decodable, Content: View>: View {
 }
 
 enum Haptic {
-    static func tap()     { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-    static func medium()  { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
-    static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
-    static func error()   { UINotificationFeedbackGenerator().notificationOccurred(.error) }
-    static func select()  { UISelectionFeedbackGenerator().selectionChanged() }
+    // 「觸覺回饋」開關（App 設定）；預設開
+    static var enabled: Bool { UserDefaults.standard.object(forKey: "aif_haptics") == nil ? true : UserDefaults.standard.bool(forKey: "aif_haptics") }
+    static func tap()     { guard enabled else { return }; UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    static func medium()  { guard enabled else { return }; UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+    static func success() { guard enabled else { return }; UINotificationFeedbackGenerator().notificationOccurred(.success) }
+    static func error()   { guard enabled else { return }; UINotificationFeedbackGenerator().notificationOccurred(.error) }
+    static func select()  { guard enabled else { return }; UISelectionFeedbackGenerator().selectionChanged() }
 }
 
 extension Date {
@@ -467,3 +469,16 @@ enum Fmt {
         return String(s.replacingOccurrences(of: "T", with: " ").prefix(19))
     }
 }
+
+// 左滑返回（董事長 2026-09-29 TG10178「沒有左滑上一頁了」）：子頁／插件頁／聊天室從左緣右滑 ＝ 返回
+struct SwipeBack: ViewModifier {
+    let action: () -> Void
+    func body(content: Content) -> some View {
+        content.simultaneousGesture(
+            DragGesture(minimumDistance: 24, coordinateSpace: .global).onEnded { v in
+                if v.startLocation.x < 48 && v.translation.width > 70 && abs(v.translation.height) < 80 { action() }
+            }
+        )
+    }
+}
+extension View { func swipeBack(_ action: @escaping () -> Void) -> some View { modifier(SwipeBack(action: action)) } }
