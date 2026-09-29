@@ -258,14 +258,16 @@ struct TerminalView: View {
         do {
             let r: TerminalBuffer = try await state.api.request("/api/terminal/rendered/\(name)")
             if let l = r.lines {
-                if l != lines { lines = l }
+                // 伺服器一次回 5000 行（~200KB）；手機只留尾段，否則 SwiftUI 排版 5000 行卡死主執行緒（董 9/29 實機「連線中」不動）
+                let keep = Array(l.suffix(showHistory ? 1200 : 300))
+                if keep != lines { lines = keep }
                 connected = true; err = nil
                 return
             }
             let b: TerminalBuffer = try await state.api.request("/api/terminal/buffer/\(name)?after=\(rawTotal)")
             if b.source == "none" { err = L("此員工未在運行，先到員工頁啟動"); connected = false; return }
             let chunk = (b.lines ?? []).joined()
-            if !chunk.isEmpty { rawText = String((rawText + ANSI.strip(chunk)).suffix(60_000)) }
+            if !chunk.isEmpty { rawText = String((rawText + ANSI.strip(chunk)).suffix(30_000)) }
             rawTotal = b.total ?? rawTotal
             connected = true; err = nil
         } catch let e as APIError where e.status == 404 {
