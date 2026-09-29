@@ -428,7 +428,8 @@ struct ChatRoomView: View {
         var byId = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
         for m in new { byId[m.id] = m }
         let sorted = byId.values.sorted { ($0.ts ?? 0, $0.id) < ($1.ts ?? 0, $1.id) }
-        if new.contains(where: { $0.msg_type == "agent" && !messages.contains(where: { o in o.id == $0.id }) }) { typing = false; typingTask?.cancel() }
+        let oldIds = Set(messages.map { $0.id })
+        if new.contains(where: { $0.msg_type == "agent" && !oldIds.contains($0.id) }) { typing = false; typingTask?.cancel() }
         messages = sorted
         lastTs = messages.last?.ts ?? lastTs
         DiskCache.save(Array(messages.suffix(100)), key: cacheKey)
