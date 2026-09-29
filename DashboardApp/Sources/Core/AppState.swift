@@ -3,7 +3,11 @@ import LocalAuthentication
 import UserNotifications
 import BackgroundTasks
 
-let DEFAULT_BASE = "https://aifactory-dashboard.tail825b5f.ts.net"
+// 出貨版不得內建任何伺服器網址（董事長 9/29 驗收：新客戶開 app 看到陌生人的 URL）。
+// 空字串＝尚未設定 → RootView 顯示「連線設定」（掃 QR／手動輸入）；設定值存 UserDefaults aif_base。
+let DEFAULT_BASE = ""
+// 尚未設定伺服器時 APIClient 的佔位網址（不會真的被打：所有請求／WebView 都以 hasBase 閘住）
+let PLACEHOLDER_BASE = URL(string: "http://aifactory.invalid")!
 let RELAY_BASE = "https://rayban-relay.goingtosheon.workers.dev"
 let BG_REFRESH_ID = "com.aifactory.dashboard.refresh"
 
@@ -11,7 +15,7 @@ let BG_REFRESH_ID = "com.aifactory.dashboard.refresh"
 final class AppState: ObservableObject {
     static let shared = AppState()
 
-    @AppStorage("aif_base") var baseString: String = DEFAULT_BASE
+    @AppStorage("aif_base") var baseString: String = DEFAULT_BASE { didSet { hasBase = AppState.normalizeBase(baseString) != nil } }
     @AppStorage("aif_user") var username: String = ""
     @AppStorage("aif_role") var role: String = ""
     @AppStorage("aif_faceid") var faceIDEnabled: Bool = false
@@ -20,6 +24,7 @@ final class AppState: ObservableObject {
     @AppStorage("aif_dispatch_agent") var dispatchAgent: String = "COO"
     @AppStorage("aif_last_bg") var lastBackgroundRefresh: Double = 0
 
+    @Published var hasBase: Bool = false        // 已設定伺服器網址（false → 顯示連線設定畫面）
     @Published var loggedIn: Bool = false
     @Published var locked: Bool = false
     @Published var offline: Bool = false
@@ -41,7 +46,9 @@ final class AppState: ObservableObject {
     var senderName: String { username.isEmpty ? "Chairman" : username }
 
     private init() {
-        api = APIClient(baseURL: URL(string: UserDefaults.standard.string(forKey: "aif_base") ?? DEFAULT_BASE) ?? URL(string: DEFAULT_BASE)!)
+        let stored = AppState.normalizeBase(UserDefaults.standard.string(forKey: "aif_base") ?? DEFAULT_BASE)
+        api = APIClient(baseURL: stored ?? PLACEHOLDER_BASE)
+        hasBase = stored != nil
         api.token = Keychain.get("token")
         api.refreshToken = Keychain.get("refresh")
         api.onTokens = { t, r in
@@ -56,6 +63,35 @@ final class AppState: ObservableObject {
         if let g = DiskCache.load(GroupsResponse.self, key: "groups") { groups = g.groups }
         if let h = DiskCache.load(HealthResponse.self, key: "health") { health = h }
         if let u = DiskCache.load([String: UsageAgent].self, key: "usage") { usage = u }
+    }
+
+    // MARK: server base
+    // 網址正規化：去頭尾空白＋去尾斜線；只收 http(s) 且有 host，其餘回 nil
+    nonisolated static func normalizeBase(_ raw: String) -> URL? {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while s.hasSuffix("/") { s.removeLast() }
+        guard !s.isEmpty, let u = URL(string: s), let scheme = u.scheme?.lowercased(),
+              scheme == "http" || scheme == "https", let h = u.host, !h.isEmpty else { return nil }
+        return u
+    }
+    // 掃 QR／手動輸入／aifactory://connect 共用入口；成功＝存 aif_base＋切 APIClient，回 true
+    @discardableResult
+    func setBase(_ raw: String) -> Bool {
+        guard let u = AppState.normalizeBase(raw) else { return false }
+        api.baseURL = u
+        baseString = u.absoluteString
+        hasBase = true
+        offline = false; lastError = nil
+        return true
+    }
+    // QR 內容可能是純網址，或 aifactory://connect?base=<網址>（電腦版精靈兩種都可能出）
+    nonisolated static func baseFromScan(_ text: String) -> String? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizeBase(t) != nil { return t }
+        if let u = URL(string: t), u.scheme?.lowercased() == "aifactory",
+           let q = URLComponents(url: u, resolvingAgainstBaseURL: false)?.queryItems,
+           let b = q.first(where: { $0.name == "base" || $0.name == "url" })?.value, normalizeBase(b) != nil { return b }
+        return nil
     }
 
     // MARK: auth
@@ -121,6 +157,7 @@ final class AppState: ObservableObject {
     }
 
     func refreshState() async {
+        guard hasBase else { return }
         do {
             let s: StateResponse = try await api.request("/api/state")
             agents = s.agents; env = s.env ?? ""; tenant = s.tenant ?? ""
@@ -130,12 +167,14 @@ final class AppState: ObservableObject {
         } catch { offline = true; lastError = error.localizedDescription }
     }
     func refreshHealth() async {
+        guard hasBase else { return }
         do {
             let h: HealthResponse = try await api.request("/api/health", auth: false, retry: false, timeout: 10)
             health = h; DiskCache.save(h, key: "health")
         } catch { }
     }
     func refreshGroups() async {
+        guard hasBase else { return }
         do {
             let g: GroupsResponse = try await api.request("/api/group-chat/groups")
             groups = g.groups.sorted { ($0.last_ts ?? 0, $0.last_msg_id ?? 0) > ($1.last_ts ?? 0, $1.last_msg_id ?? 0) }
@@ -144,7 +183,7 @@ final class AppState: ObservableObject {
     }
     // /api/usage 首掃可能數分鐘 → 長逾時、失敗靜默
     func refreshUsage() async {
-        if usageLoading { return }
+        if usageLoading || !hasBase { return }
         usageLoading = true
         defer { usageLoading = false }
         do {
@@ -185,6 +224,7 @@ final class AppState: ObservableObject {
     }
     // 派工到員工終端機（B6 分享／URL scheme 落點）：走 group_reply=true 一般文字＝boss 信封
     func dispatch(text: String, to agent: String) async -> String? {
+        guard hasBase else { return L("尚未設定伺服器網址") }
         do {
             let _: OkResponse = try await api.request("/api/terminal/input", method: "POST",
                                                       body: ["name": agent, "text": text, "group_reply": true])

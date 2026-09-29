@@ -19,7 +19,7 @@ targets:
       properties:
         CFBundleDisplayName: AI工廠
         RelayAuthKey: $(RELAY_AUTH_KEY)
-        CFBundleVersion: "9"
+        CFBundleVersion: "10"
         CFBundleShortVersionString: "3.0"
         UILaunchScreen:
           UIColorName: ""
@@ -27,6 +27,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         NSFaceIDUsageDescription: 使用 Face ID 解鎖控制台
         NSPhotoLibraryUsageDescription: 群聊傳送照片與影片
+        NSCameraUsageDescription: 用來掃描電腦畫面上的連線 QR
         UIBackgroundModes: [fetch, remote-notification]
         BGTaskSchedulerPermittedIdentifiers: [com.aifactory.dashboard.refresh]
         UIViewControllerBasedStatusBarAppearance: true

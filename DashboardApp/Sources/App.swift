@@ -35,6 +35,8 @@ struct AIFactoryDashboardApp: App {
         guard url.scheme == "aifactory" else { return }
         let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let q = comps?.queryItems ?? []
+        // aifactory://connect?base=https://… （電腦版精靈的連結／QR 另一種內容）
+        if url.host == "connect", let b = AppState.baseFromScan(url.absoluteString) { state.setBase(b); return }
         if url.host == "dispatch", let text = q.first(where: { $0.name == "text" })?.value, !text.isEmpty {
             if let a = q.first(where: { $0.name == "agent" })?.value, !a.isEmpty { state.dispatchAgent = a }
             state.pendingShare = text
@@ -73,7 +75,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 struct RootView: View {
     @EnvironmentObject var state: AppState
     var body: some View {
-        ShellView()
+        Group {
+            // 尚未設定伺服器網址（新客戶首開／從未掃過 QR）→ 連線設定；已有 aif_base 的舊用戶直接進殼
+            if state.hasBase { ShellView() } else { ConnectSetupView() }
+        }
             .sheet(isPresented: Binding(get: { state.pendingShare != nil }, set: { if !$0 { state.pendingShare = nil } })) {
                 DispatchSheet(text: state.pendingShare ?? "")
             }

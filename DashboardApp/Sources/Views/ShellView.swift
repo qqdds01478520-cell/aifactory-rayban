@@ -22,6 +22,7 @@ struct ShellView: View {
         .animation(.easeInOut(duration: 0.2), value: state.locked)
         .sheet(isPresented: $shell.showSettings) { AppSettingsSheet().environmentObject(state).environmentObject(L10n.shared) }
         .onAppear { shell.state = state }
+        .onChange(of: state.baseString) { _ in shell.reload() }   // 設定頁改了伺服器網址 → 重載網頁
     }
     // 連不上網頁：可改伺服器網址重試（網頁本身沒有這欄，殼要有）
     private var failView: some View {
@@ -31,15 +32,15 @@ struct ShellView: View {
             Text(shell.failText).font(WF.sans(12)).foregroundColor(Theme.text2).multilineTextAlignment(.center).padding(.horizontal, 24)
             TextField("https://…", text: $shell.serverDraft).noAutoCap().inputWarm(padV: 10, padH: 12, size: 13).padding(.horizontal, 24)
             Button(L("重試")) {
-                if let u = URL(string: shell.serverDraft.trimmingCharacters(in: .whitespaces)), u.scheme != nil {
-                    state.baseString = u.absoluteString; state.api.baseURL = u
-                }
-                shell.reload()
+                if !state.setBase(shell.serverDraft) { shell.reload() }   // setBase 成功會經 onChange(baseString) 重載
             }.buttonStyle(PrimaryButtonStyle()).frame(width: 200)
+            Button(L("掃描 QR 重新連線")) { shell.showConnect = true }
+                .font(WF.sans(13)).foregroundColor(Theme.primary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg.ignoresSafeArea())
         .onAppear { if shell.serverDraft.isEmpty { shell.serverDraft = state.baseString } }
+        .sheet(isPresented: $shell.showConnect) { ConnectSetupView(asSheet: true).environmentObject(state).environmentObject(L10n.shared) }
     }
 }
 
@@ -49,6 +50,7 @@ final class ShellModel: ObservableObject {
     @Published var failed = false
     @Published var failText = ""
     @Published var showSettings = false
+    @Published var showConnect = false
     @Published var serverDraft = ""
     weak var webView: WKWebView?
     weak var state: AppState?
@@ -240,6 +242,7 @@ struct AppSettingsSheet: View {
     @EnvironmentObject var l10n: L10n
     @Environment(\.dismiss) var dismiss
     @State private var cacheSize = DiskCache.sizeBytes
+    @State private var showConnect = false
     var version: String {
         let d = Bundle.main.infoDictionary
         return "\(d?["CFBundleShortVersionString"] as? String ?? "") (\(d?["CFBundleVersion"] as? String ?? ""))"
@@ -264,7 +267,9 @@ struct AppSettingsSheet: View {
                     } label: {
                         HStack { Text(L("推播通知")).foregroundColor(Theme.text); Spacer(); Text(state.pushStatus).foregroundColor(Theme.text2); Text("›").foregroundColor(Theme.text3) }
                     }
-                    HStack { Text(L("伺服器")); Spacer(); Text(state.baseString).font(WF.sans(12)).foregroundColor(Theme.text2).lineLimit(1) }
+                    Button { showConnect = true } label: {
+                        HStack { Text(L("伺服器")).foregroundColor(Theme.text); Spacer(); Text(state.baseString.isEmpty ? L("未設定") : state.baseString).font(WF.sans(12)).foregroundColor(Theme.text2).lineLimit(1); Text("›").foregroundColor(Theme.text3) }
+                    }
                     HStack { Text(L("App 版本")); Spacer(); Text(version).foregroundColor(Theme.text2) }
                     HStack { Text(L("離線快取")); Spacer(); Text(Fmt.bytes(cacheSize)).foregroundColor(Theme.text2) }
                     Button(L("清除快取")) { DiskCache.clear(); cacheSize = 0; Haptic.medium() }
@@ -275,5 +280,6 @@ struct AppSettingsSheet: View {
             .task { if state.agents.isEmpty { await state.refreshState() } }
         }
         .background(Theme.bg.ignoresSafeArea())
+        .sheet(isPresented: $showConnect) { ConnectSetupView(asSheet: true).environmentObject(state).environmentObject(L10n.shared) }
     }
 }
