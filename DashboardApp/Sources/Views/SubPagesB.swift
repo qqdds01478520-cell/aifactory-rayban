@@ -23,9 +23,9 @@ struct LicensePage: View {
                         HStack(alignment: .top) {
                             Text(l.key).font(WF.mono(11)).foregroundColor(Theme.text).textSelection(.enabled)
                             Spacer()
-                            Chip(l.status == "active" ? L("啟用中") : (l.status == "revoked" ? L("已撤銷") : L("待啟用")), l.status == "active" ? .success : (l.status == "revoked" ? .danger : .warn))
+                            Chip(statusText(l), statusKind(l))
                         }
-                        Text(L("租戶:") + " \(l.tenant_id ?? "—")  " + L("方案:") + " \(l.tier ?? "—")" + (l.expires_at.map { "  ⏳ " + Fmt.isoShort($0) } ?? "")).font(WF.sans(12)).foregroundColor(Theme.text2)
+                        Text(licenseMeta(l)).font(WF.sans(12)).foregroundColor(Theme.text2)
                         HStack(spacing: 8) {
                             if l.status != "active" && l.status != "revoked" { Button(L("啟用")) { post("/api/license/activate", ["key": l.key, "hwid": hwid]) }.buttonStyle(SoftButtonStyle(padV: 7, padH: 12, size: 12, bg: Color(hex: 0x4a8c5c, alpha: 0.12), fg: Theme.success)) }
                             if l.status != "revoked" { Button(L("撤銷")) { post("/api/license/revoke", ["key": l.key]) }.buttonStyle(SoftButtonStyle(padV: 7, padH: 12, size: 12, bg: Color(hex: 0xb5341a, alpha: 0.1), fg: Theme.tagError)) }
@@ -37,6 +37,13 @@ struct LicensePage: View {
         .background(Theme.bg.ignoresSafeArea())
         .task { await load() }
         .sheet(isPresented: $showIssue) { IssueLicenseSheet { await load() } }
+    }
+    private func statusText(_ l: LicenseItem) -> String { l.status == "active" ? L("啟用中") : (l.status == "revoked" ? L("已撤銷") : L("待啟用")) }
+    private func statusKind(_ l: LicenseItem) -> ChipKind { l.status == "active" ? .success : (l.status == "revoked" ? .danger : .warn) }
+    private func licenseMeta(_ l: LicenseItem) -> String {
+        var s = L("租戶:") + " " + (l.tenant_id ?? "—") + "  " + L("方案:") + " " + (l.tier ?? "—")
+        if let e = l.expires_at { s += "  ⏳ " + Fmt.isoShort(e) }
+        return s
     }
     private func load() async {
         if let r: LicenseList = try? await state.api.request("/api/license/list") { list = r.licenses ?? [] }

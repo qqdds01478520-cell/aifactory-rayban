@@ -153,7 +153,7 @@ struct TerminalView: View {
                 let fresh = (r.urls ?? []).compactMap { $0.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) }.filter { $0.hasPrefix("http") }
                 if let f = fresh.first { url = f; urls = Array(NSOrderedSet(array: fresh)) as? [String] ?? fresh }
             }
-            if let u = URL(string: url) { UIApplication.shared.open(u) }
+            if let u = URL(string: url) { await UIApplication.shared.open(u) }
         }
     }
 

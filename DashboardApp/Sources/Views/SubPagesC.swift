@@ -118,7 +118,7 @@ struct StorePage: View {
         Task {
             do {
                 let r: CheckoutResponse = try await state.api.request("/api/store/checkout", method: "POST", body: ["product_id": p.id], timeout: 60)
-                if let u = r.checkout_url, let url = URL(string: u) { UIApplication.shared.open(url) } else { nav.show(r.error ?? L("無法建立結帳"), "error") }
+                if let u = r.checkout_url, let url = URL(string: u) { await UIApplication.shared.open(url) } else { nav.show(r.error ?? L("無法建立結帳"), "error") }
             } catch { nav.show(error.localizedDescription, "error") }
             busy = false
         }
@@ -230,14 +230,24 @@ struct ConnectView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if st?.connected == true {
-                Text("✅ " + (kind == .chatgpt ? L("已連接 ChatGPT") + (st?.email.map { "（\($0)）" } ?? "") + "，" + L("員工可用你的 ChatGPT 額度運作。") : L("已連接 Grok，員工可用你的 Grok 訂閱額度運作。"))).font(WF.sans(13)).foregroundColor(Theme.success)
+                Text(connectedText).font(WF.sans(13)).foregroundColor(Theme.success)
             } else {
-                Button(busy ? L("連線中…") : ("🔗 " + (kind == .chatgpt ? L("連接我的 ChatGPT 帳號") : L("連接我的 Grok 帳號")))) { start() }.buttonStyle(WarmButtonStyle(padV: 9, padH: 14, size: 13)).disabled(busy)
+                Button(buttonText) { start() }.buttonStyle(WarmButtonStyle(padV: 9, padH: 14, size: 13)).disabled(busy)
                 if let s = st?.state, !s.isEmpty, s != "idle" { Text(s).font(WF.sans(11)).foregroundColor(Theme.text3) }
             }
             if let e = st?.error, !e.isEmpty { Text(e).font(WF.sans(12)).foregroundColor(Theme.danger) }
         }
         .task { st = try? await state.api.request(statusPath) }
+    }
+    private var connectedText: String {
+        if kind == .grok { return "✅ " + L("已連接 Grok，員工可用你的 Grok 訂閱額度運作。") }
+        var s = "✅ " + L("已連接 ChatGPT")
+        if let e = st?.email, !e.isEmpty { s += "（" + e + "）" }
+        return s + "，" + L("員工可用你的 ChatGPT 額度運作。")
+    }
+    private var buttonText: String {
+        if busy { return L("連線中…") }
+        return "🔗 " + (kind == .chatgpt ? L("連接我的 ChatGPT 帳號") : L("連接我的 Grok 帳號"))
     }
     private func start() {
         busy = true

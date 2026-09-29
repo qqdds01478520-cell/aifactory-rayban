@@ -3,10 +3,6 @@ import UserNotifications
 import BackgroundTasks
 import WebKit
 
-let DEFAULT_BASE = "https://aifactory-dashboard.tail825b5f.ts.net"
-let RELAY_BASE = "https://rayban-relay.goingtosheon.workers.dev"
-let BG_REFRESH_ID = "com.aifactory.dashboard.refresh"
-
 @main
 struct AIFactoryDashboardApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
