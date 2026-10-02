@@ -40,7 +40,7 @@ enum Theme {
 
 /// 一個功能分頁的身分（色彩編碼＋圖示）。
 enum AppTab: String, CaseIterable, Identifiable {
-    case youtube, maps, telegram, travel, glasses
+    case youtube, maps, telegram, travel, glasses, mirror
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -49,6 +49,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .telegram: return "Telegram"
         case .travel: return "旅遊"
         case .glasses: return "眼鏡"
+        case .mirror: return "操作眼鏡"
         }
     }
     var icon: String {
@@ -58,6 +59,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .telegram: return "paperplane.fill"
         case .travel: return "airplane"
         case .glasses: return "eyeglasses"
+        case .mirror: return "rectangle.on.rectangle"
         }
     }
     var accent: Color {
@@ -67,6 +69,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .telegram: return Theme.telegram
         case .travel: return Theme.travel
         case .glasses: return Theme.glasses
+        case .mirror: return Theme.brand
         }
     }
     var hint: String {
@@ -76,6 +79,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .telegram: return "跟克拉扣說話・語音／打字"
         case .travel: return "克拉扣隨行・導遊/菜單/行程"
         case .glasses: return "連 Ray-Ban Display・鏡頭/鏡片"
+        case .mirror: return "鏡像鏡片畫面・手機直接操作眼鏡 app"
         }
     }
 }

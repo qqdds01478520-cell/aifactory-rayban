@@ -62,6 +62,7 @@ struct ContentView: View {
         case .telegram: TelegramView()
         case .travel: TravelHome()
         case .glasses: GlassesView()
+        case .mirror: MirrorView()
         }
     }
 
