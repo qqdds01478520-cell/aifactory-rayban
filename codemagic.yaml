@@ -56,7 +56,7 @@ workflows:
           mkdir -p "$OUT" "$SHOTS"
           echo "OUT=$OUT  SHOTS=$SHOTS"
           i=1
-          for TAB in youtube maps telegram travel; do
+          for TAB in youtube maps telegram travel mirror; do
             xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" 2>/dev/null || true
             xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -startTab "$TAB"
             sleep 10
