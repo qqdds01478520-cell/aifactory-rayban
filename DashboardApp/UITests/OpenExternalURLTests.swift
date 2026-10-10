@@ -76,25 +76,36 @@ final class OpenExternalURLTests: XCTestCase {
 
     func testE_xtermWrappedUrlTap_opensSafari() {
         // 董實際的點法：終端機（xterm）裡折成多行的 OAuth 網址，直接用手指點那串字。
+        // 測試頁把網址當「一整條沒換行的長字串」寫進 xterm（跟 PTY 一樣），由 xterm 自己折行（isWrapped），
+        // web-links addon 要能把折行接回同一條。所以①點的是網址「中段」那一行（第 2 行，含 client_id），
+        // 不點第一行；②開出去後回 app 讀狀態列「E：點到連結 <uri>」，斷言 uri 含網址尾巴 create_api_key＝整條接回來了。
         let app = launchTestPage()
         let web = app.webViews.firstMatch
-        // 等 xterm 從 CDN 載好（狀態列會寫「E：xterm 就緒」）
         let ready = web.staticTexts.containing(NSPredicate(format: "label CONTAINS 'E：xterm 就緒'")).firstMatch
-        XCTAssertTrue(ready.waitForExistence(timeout: 30), "E：xterm 沒載起來（CDN／JS 錯誤），狀態列：\(web.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'E：'")).firstMatch.label)")
-        // 優先找 DOM 渲染出來的那行網址文字；找不到就照版面座標點（xterm 第 3 行，網址第一行）
-        let urlText = web.staticTexts.containing(NSPredicate(format: "label CONTAINS 'aif-E'")).firstMatch
+        let readyOk = ready.waitForExistence(timeout: 30)
+        let statusNow = web.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'E：'")).firstMatch
+        XCTAssertTrue(readyOk, "E：xterm 沒載起來，狀態列：\(statusNow.exists ? statusNow.label : "(找不到狀態列)")")
+        // 優先找 DOM 渲染出來的網址第 2 行（含 client_id）；找不到就照版面座標點
+        let midRow = web.staticTexts.containing(NSPredicate(format: "label CONTAINS 'client_id'")).firstMatch
         let opened: Bool
-        if urlText.waitForExistence(timeout: 5) {
+        if midRow.waitForExistence(timeout: 5) {
             print("AIF_E_MODE staticText")
-            opened = opensSafari(app, name: "E_xterm_url") { urlText.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).tap() }
+            opened = opensSafari(app, name: "E_xterm_url") { midRow.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap() }
         } else {
             print("AIF_E_MODE coordinate")
             // 版面：body padding-top 24 + h2(約 34) + A/B/C/D 四顆（各 ~52 + 10 邊距）≈ 306 + #term margin 10 + padding 4
-            // 行高 14*1.15≈16.1 → 第 3 行（index 2）中心 ≈ 2.5*16.1 ≈ 40
+            // 行高 14*1.15≈16.1 → 網址第 2 行＝第 4 列（index 3）中心 ≈ 3.5*16.1 ≈ 56
             let termTop: CGFloat = 24 + 34 + 4 * 62 + 10 + 4
-            let pt = web.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 60, dy: termTop + 40))
+            let pt = web.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 60, dy: termTop + 56))
             opened = opensSafari(app, name: "E_xterm_url") { pt.tap() }
         }
         XCTAssertTrue(opened, "E：點 xterm 裡的網址沒有交給 Safari——這就是董在手機上按的那串字")
+        // 回到 app 後讀狀態列：addon 回報的 uri 必須是整條（含尾巴），證明折行有接回同一條網址
+        let clicked = web.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'E：點到連結'")).firstMatch
+        let clickedOk = clicked.waitForExistence(timeout: 10)
+        let label = clickedOk ? clicked.label : (statusNow.exists ? statusNow.label : "(無)")
+        print("AIF_E_URI \(label)")
+        XCTAssertTrue(clickedOk, "E：addon 沒有收到點擊（狀態列：\(label)）")
+        XCTAssertTrue(label.contains("create_api_key"), "E：addon 只認到網址前半段，折行沒接回去：\(label)")
     }
 }
