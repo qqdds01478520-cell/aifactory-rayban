@@ -50,8 +50,13 @@ function aifScriptFail(n){var st=document.getElementById('estat');if(st)st.textC
     // 第五輪（COO ③）：先寫 30 行填充把網址捲上去（viewportY>0），touchend 的座標→格子必須算進 viewportY 才點得到。
     // 最後 14 列畫面跟第四輪一模一樣（E 在第 1–5 列、F 在第 7–10 列），XCUITest 的座標不用改。
     var pre=''; for(var k=1;k<=30;k++) pre+='filler line '+k+'\r\n';
+    // 內容不滿 14 列時畫面頂端會殘留 filler 29/30（第二筆 build 實測 viewportY=28，E/F 座標整排偏 2 列點空）：
+    // 寫完找「> /login」那行，不在第 0 列就補空行把它推到畫面頂端，畫面才跟 XCUITest 的座標對得上。
     term.write(pre+'> /login\r\n\r\n'+E+'\r\n\r\n'+Fseq+'\r\n\r\nPaste code here if prompted >\r\n', function(){
-      st.textContent='E：xterm 就緒 viewportY='+term.buffer.active.viewportY;
+      var b=term.buffer.active, top=-1;
+      for(var y=0;y<b.length;y++){var l=b.getLine(y); if(l&&l.translateToString(true).indexOf('> /login')===0){top=y;break;}}
+      var pad=top-b.viewportY, done=function(){ st.textContent='E：xterm 就緒 viewportY='+term.buffer.active.viewportY+' top='+top; };
+      if(top>0&&pad>0){ var nl=''; for(var j=0;j<pad;j++) nl+='\r\n'; term.write(nl, done); } else done();
     });
   }catch(e){st.textContent='E：錯誤 '+e}
 })();
