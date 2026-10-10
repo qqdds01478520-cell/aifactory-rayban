@@ -192,3 +192,41 @@ workflows:
           ls -la ../export_ipa
     artifacts:
       - export_ipa/*.ipa
+
+  # 控制台殼：iPhone 模擬器 XCUITest（免簽章）。驗「網頁連結點下去殼會不會交給 Safari」（2026-10-10 董「你要測試過啊」）
+  ios-dashboard-sim-test:
+    name: AI工廠控制台 iOS 殼 模擬器測試
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+    scripts:
+      - name: 安裝 XcodeGen＋生成專案
+        script: |
+          brew install xcodegen
+          cd DashboardApp
+          xcodegen generate
+      - name: 模擬器跑 XCUITest
+        script: |
+          set -o pipefail
+          cd DashboardApp
+          DEST_NAME=$(xcrun simctl list devices available | grep -m1 -oE 'iPhone 1[5-9][^(]*' | sed 's/ *$//')
+          [ -z "$DEST_NAME" ] && DEST_NAME="iPhone 15"
+          echo "destination=$DEST_NAME"
+          OUT="${CM_EXPORT_DIR:-${CM_BUILD_DIR:-$PWD}/export}"; mkdir -p "$OUT"
+          xcodebuild test \
+            -project AIFactoryDashboard.xcodeproj \
+            -scheme AIFactoryDashboard \
+            -destination "platform=iOS Simulator,name=$DEST_NAME" \
+            -resultBundlePath "$OUT/sim_test.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$OUT/xcodebuild_test.log" | grep -E "AIF_RESULT|Test Case|error:|\*\* TEST" || true
+          echo "=== AIF_RESULT 摘要 ==="; grep -E "AIF_RESULT" "$OUT/xcodebuild_test.log" || echo "(沒有任何 AIF_RESULT 行＝測試根本沒跑到)"
+          # 把截圖從 xcresult 撈出來
+          xcrun xcresulttool export attachments --path "$OUT/sim_test.xcresult" --output-path "$OUT/attachments" 2>/dev/null || \
+          xcrun xcresulttool export --type directory --path "$OUT/sim_test.xcresult" --output-path "$OUT/attachments" 2>/dev/null || true
+          ls -la "$OUT" "$OUT/attachments" 2>/dev/null || true
+    artifacts:
+      - $CM_EXPORT_DIR/xcodebuild_test.log
+      - $CM_EXPORT_DIR/attachments/**
+      - $CM_EXPORT_DIR/sim_test.xcresult

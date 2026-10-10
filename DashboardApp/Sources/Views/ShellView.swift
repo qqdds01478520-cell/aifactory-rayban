@@ -97,9 +97,30 @@ struct WebShell: UIViewRepresentable {
         w.scrollView.refreshControl = rc
         model.webView = w
         model.state = state
+        // 測試模式（XCUITest／模擬器，啟動參數 -aifTestPage）：不連伺服器，載內建測試頁，
+        // 專門驗「網頁裡的連結點下去，殼會不會真的把網址交給 Safari」。正式啟動不會走到。
+        if ProcessInfo.processInfo.arguments.contains("-aifTestPage") {
+            w.loadHTMLString(Self.testPageHTML, baseURL: URL(string: "https://aif-test.local/"))
+            return w
+        }
         w.load(URLRequest(url: state.api.url("/"), cachePolicy: .reloadRevalidatingCacheData, timeoutInterval: 30))
         return w
     }
+
+    // 三種「從網頁開外部網址」的寫法，對應 8896 前端實際用到的路徑：
+    //  A 真的 <a target=_blank>（終端機歷史視圖的連結、「開啟登入網址」鈕的殼內版本）
+    //  B 使用者點擊 → 同步 window.open（xterm web-links addon、商城靜態付款連結）
+    //  C 使用者點擊 → 等 1 秒再 window.open（舊寫法：先 await 抓網址再開 → 預期會被擋，當對照組）
+    static let testPageHTML = """
+    <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>body{font-family:-apple-system;padding:24px;font-size:18px}a,button{display:block;width:100%;padding:18px;margin:14px 0;font-size:18px;border-radius:12px;border:0;background:#b5341a;color:#fff;text-align:center;text-decoration:none}</style>
+    </head><body>
+    <h2>開網址測試</h2>
+    <a id="a" href="https://example.com/aif-A" target="_blank" rel="noopener">A 真連結</a>
+    <button id="b" onclick="window.open('https://example.com/aif-B','_blank','noopener')">B 同步開</button>
+    <button id="c" onclick="setTimeout(function(){window.open('https://example.com/aif-C','_blank','noopener')},1000)">C 延遲開</button>
+    </body></html>
+    """
     func updateUIView(_ uiView: WKWebView, context: Context) { context.coordinator.parent = self }
 
     // 注入網頁：①把原生 Keychain 的 token 種進 localStorage（v2 原生登入過的人不用再登）②localStorage 的 token／帳號變了就回報原生

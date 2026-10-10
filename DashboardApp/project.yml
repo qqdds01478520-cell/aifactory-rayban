@@ -39,3 +39,30 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.aifactory.dashboard
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.9"
+  # 模擬器 UI 測試（2026-10-10 起：殼的「開外部網址」行為一律在這裡驗，不拿董的手機當測試機）
+  AIFactoryDashboardUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: AIFactoryDashboard
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aifactory.dashboard.uitests
+        TEST_TARGET_NAME: AIFactoryDashboard
+        SWIFT_VERSION: "5.9"
+schemes:
+  AIFactoryDashboard:
+    build:
+      targets:
+        AIFactoryDashboard: all
+        AIFactoryDashboardUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - AIFactoryDashboardUITests
+    archive:
+      config: Release
