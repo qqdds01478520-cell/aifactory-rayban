@@ -214,13 +214,13 @@ workflows:
           [ -z "$DEST_NAME" ] && DEST_NAME="iPhone 15"
           echo "destination=$DEST_NAME"
           OUT="${CM_EXPORT_DIR:-${CM_BUILD_DIR:-$PWD}/export}"; mkdir -p "$OUT"
-          xcodebuild test \
+          RC=0; { xcodebuild test \
             -project AIFactoryDashboard.xcodeproj \
             -scheme AIFactoryDashboard \
             -destination "platform=iOS Simulator,name=$DEST_NAME" \
             -resultBundlePath "$OUT/sim_test.xcresult" \
             CODE_SIGNING_ALLOWED=NO \
-            2>&1 | tee "$OUT/xcodebuild_test.log" | grep -E "AIF_RESULT|AIF_E_MODE|Test Case|error:|\*\* TEST" ; RC=${PIPESTATUS[0]}
+            2>&1 | tee "$OUT/xcodebuild_test.log" | grep -E "AIF_RESULT|AIF_E_MODE|Test Case|error:|\*\* TEST" ; RC=${PIPESTATUS[0]}; } || true
           echo "=== AIF_RESULT 摘要 ==="; grep -E "AIF_RESULT|AIF_E_MODE" "$OUT/xcodebuild_test.log" || echo "(沒有任何 AIF_RESULT 行＝測試根本沒跑到)"
           # 把截圖從 xcresult 撈出來
           xcrun xcresulttool export attachments --path "$OUT/sim_test.xcresult" --output-path "$OUT/attachments" 2>/dev/null || \
