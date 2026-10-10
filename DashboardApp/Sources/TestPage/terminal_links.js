@@ -71,9 +71,8 @@
       var trimmed = text.replace(/\s+$/, '');
       return { text: trimmed, cells: cells.slice(0, trimmed.length) };
     }
-    term.registerLinkProvider({
-      provideLinks: function (y, cb) {        // y 是 1-based 的 buffer 列
-        var y0 = y - 1;
+    // 以 y0（0-based buffer 列）為中心掃 ±12 列，回傳涵蓋 y0 的網址 [{r0,sx,r1,ex,href}]（列號已轉成絕對 buffer 列）
+    function linksAt(y0) {
         var top = Math.max(0, y0 - 12), bot = Math.min(term.buffer.active.length - 1, y0 + 12);
         var rows = [];
         for (var r = top; r <= bot; r++) rows.push(rowText(r));
@@ -105,19 +104,74 @@
           var f = found[q];
           if (top + f.r0 > y0 || y0 > top + f.r1) continue;
           var c0 = rows[f.r0].cells, c1 = rows[f.r1].cells;
-          out.push({
-            range: { start: { x: (c0[f.sx] != null ? c0[f.sx] : f.sx) + 1, y: top + f.r0 + 1 },
-                     end:   { x: (c1[f.ex] != null ? c1[f.ex] : f.ex) + 1, y: top + f.r1 + 1 } },
-            text: f.href,
-            decorations: { underline: true, pointerCursor: true },
-            activate: (function (href) {
-              return function (ev) { try { ev && ev.preventDefault && ev.preventDefault(); } catch (_) {} open(href); };
-            })(f.href)
-          });
+          out.push({ r0: top + f.r0, sx: (c0[f.sx] != null ? c0[f.sx] : f.sx), r1: top + f.r1, ex: (c1[f.ex] != null ? c1[f.ex] : f.ex), href: f.href });
         }
+        return out;
+    }
+    function hit(l, x0, y0) {     // (x0,y0) 0-based 格子是否落在連結範圍內
+      if (y0 < l.r0 || y0 > l.r1) return false;
+      if (y0 === l.r0 && x0 < l.sx) return false;
+      if (y0 === l.r1 && x0 > l.ex) return false;
+      return true;
+    }
+
+    term.registerLinkProvider({
+      provideLinks: function (y, cb) {        // y 是 1-based 的 buffer 列
+        var out = linksAt(y - 1).map(function (l) {
+          return {
+            range: { start: { x: l.sx + 1, y: l.r0 + 1 }, end: { x: l.ex + 1, y: l.r1 + 1 } },
+            text: l.href,
+            decorations: { underline: true, pointerCursor: true },
+            activate: function (ev) { try { ev && ev.preventDefault && ev.preventDefault(); } catch (_) {} open(l.href); }
+          };
+        });
         cb(out.length ? out : undefined);
       }
     });
+
+    // iOS 觸控（2026-10-10 模擬器第四輪抓到）：tap 時 WebKit 先送 mouseover/mousemove，xterm 一畫出 hover 底線
+    // （DOM 變了）iOS 就把後面的 mousedown/mouseup/click 吞掉，連結永遠點不到。所以不靠滑鼠事件：
+    // 自己接 touchend，從座標算出格子，命中連結就在手勢內直接開（preventDefault 擋掉後續合成滑鼠事件）。
+    var tStart = null;
+    function cellFromPoint(px, py) {
+      var rowsEl = term.element && term.element.querySelector('.xterm-rows');
+      if (!rowsEl) return null;
+      var r = rowsEl.getBoundingClientRect();
+      if (px < r.left || px >= r.right || py < r.top || py >= r.bottom) return null;
+      var first = rowsEl.firstElementChild;
+      var rh = first ? first.getBoundingClientRect().height : r.height / term.rows;
+      var cw = r.width / term.cols;
+      if (!(rh > 0) || !(cw > 0)) return null;
+      return { x: Math.floor((px - r.left) / cw), y: term.buffer.active.viewportY + Math.floor((py - r.top) / rh) };
+    }
+    function attach(n) {
+      var el = term.element;
+      if (!el) { if (n < 100) setTimeout(function () { attach(n + 1); }, 100); return; }   // term.open() 之後才有 element
+      el.addEventListener('touchstart', function (e) {
+        tStart = (e.touches.length === 1) ? { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: false } : null;
+      }, { passive: true });
+      el.addEventListener('touchmove', function (e) {
+        var t = e.touches[0];
+        if (tStart && t && (Math.abs(t.clientX - tStart.x) > 10 || Math.abs(t.clientY - tStart.y) > 10)) tStart.moved = true;
+      }, { passive: true });
+      el.addEventListener('touchend', function (e) {
+        if (!tStart || tStart.moved || e.changedTouches.length !== 1) return;
+        var t = e.changedTouches[0];
+        var c = cellFromPoint(t.clientX, t.clientY);
+        if (!c) return;
+        var links = linksAt(c.y);
+        for (var i = 0; i < links.length; i++) {
+          if (hit(links[i], c.x, c.y)) {
+            try { e.preventDefault(); } catch (_) {}
+            open(links[i].href);
+            return;
+          }
+        }
+      }, { passive: false });
+    }
+    attach(0);
+    // 給測試用：從座標查連結（不開）
+    term.__aifLinkAtPoint = function (px, py) { var c = cellFromPoint(px, py); if (!c) return null; var ls = linksAt(c.y); for (var i = 0; i < ls.length; i++) if (hit(ls[i], c.x, c.y)) return ls[i].href; return null; };
   }
 
   g.aifLinkifyTerminalText = linkifyTerminalText;
