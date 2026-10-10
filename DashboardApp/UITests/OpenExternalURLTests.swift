@@ -74,38 +74,46 @@ final class OpenExternalURLTests: XCTestCase {
         XCTAssertTrue(opensSafari(app, tap: el, name: "D_synth_anchor"), "D：合成 anchor click 沒有交給 Safari")
     }
 
-    func testE_xtermWrappedUrlTap_opensSafari() {
-        // 董實際的點法：終端機（xterm）裡折成多行的 OAuth 網址，直接用手指點那串字。
-        // 測試頁把網址當「一整條沒換行的長字串」寫進 xterm（跟 PTY 一樣），由 xterm 自己折行（isWrapped），
-        // web-links addon 要能把折行接回同一條。所以①點的是網址「中段」那一行（第 2 行，含 client_id），
-        // 不點第一行；②開出去後回 app 讀狀態列「E：點到連結 <uri>」，斷言 uri 含網址尾巴 create_api_key＝整條接回來了。
+    /// E/F 共用：點 xterm 裡網址的中段那一行，開出去後回 app 讀狀態列，斷言 provider 回報的 uri 含尾巴（折行有接回同一條）
+    private func tapTerminalUrl(name: String, midKeyword: String, tail: String, fallbackRowIndex: Int) {
         let app = launchTestPage()
         let web = app.webViews.firstMatch
         let ready = web.staticTexts.containing(NSPredicate(format: "label CONTAINS 'E：xterm 就緒'")).firstMatch
         let readyOk = ready.waitForExistence(timeout: 30)
         let statusNow = web.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'E：'")).firstMatch
-        XCTAssertTrue(readyOk, "E：xterm 沒載起來，狀態列：\(statusNow.exists ? statusNow.label : "(找不到狀態列)")")
-        // 優先找 DOM 渲染出來的網址第 2 行（含 client_id）；找不到就照版面座標點
-        let midRow = web.staticTexts.containing(NSPredicate(format: "label CONTAINS 'client_id'")).firstMatch
+        XCTAssertTrue(readyOk, "\(name)：xterm 沒載起來，狀態列：\(statusNow.exists ? statusNow.label : "(找不到狀態列)")")
+        // 優先找 DOM 渲染出來的網址中段那一行；找不到就照版面座標點
+        let midRow = web.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", midKeyword)).firstMatch
         let opened: Bool
         if midRow.waitForExistence(timeout: 5) {
-            print("AIF_E_MODE staticText")
-            opened = opensSafari(app, name: "E_xterm_url") { midRow.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap() }
+            print("AIF_E_MODE \(name) staticText")
+            opened = opensSafari(app, name: name) { midRow.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap() }
         } else {
-            print("AIF_E_MODE coordinate")
+            print("AIF_E_MODE \(name) coordinate")
             // 版面：body padding-top 24 + h2(約 34) + A/B/C/D 四顆（各 ~52 + 10 邊距）≈ 306 + #term margin 10 + padding 4
-            // 行高 14*1.15≈16.1 → 網址第 2 行＝第 4 列（index 3）中心 ≈ 3.5*16.1 ≈ 56
+            // 行高 14*1.15≈16.1 → 第 n 列中心 ≈ (n+0.5)*16.1
             let termTop: CGFloat = 24 + 34 + 4 * 62 + 10 + 4
-            let pt = web.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 60, dy: termTop + 56))
-            opened = opensSafari(app, name: "E_xterm_url") { pt.tap() }
+            let pt = web.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 60, dy: termTop + (CGFloat(fallbackRowIndex) + 0.5) * 16.1))
+            opened = opensSafari(app, name: name) { pt.tap() }
         }
-        XCTAssertTrue(opened, "E：點 xterm 裡的網址沒有交給 Safari——這就是董在手機上按的那串字")
-        // 回到 app 後讀狀態列：addon 回報的 uri 必須是整條（含尾巴），證明折行有接回同一條網址
+        XCTAssertTrue(opened, "\(name)：點 xterm 裡的網址沒有交給 Safari——這就是董在手機上按的那串字")
         let clicked = web.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'E：點到連結'")).firstMatch
         let clickedOk = clicked.waitForExistence(timeout: 10)
         let label = clickedOk ? clicked.label : (statusNow.exists ? statusNow.label : "(無)")
-        print("AIF_E_URI \(label)")
-        XCTAssertTrue(clickedOk, "E：addon 沒有收到點擊（狀態列：\(label)）")
-        XCTAssertTrue(label.contains("create_api_key"), "E：addon 只認到網址前半段，折行沒接回去：\(label)")
+        print("AIF_E_URI \(name) \(label)")
+        XCTAssertTrue(clickedOk, "\(name)：provider 沒有收到點擊（狀態列：\(label)）")
+        // 尾巴要「剛好」等於樣本結尾：少了＝沒接完，多了＝把下一行提示文字黏進來了
+        XCTAssertTrue(label.hasSuffix(tail), "\(name)：provider 回報的網址結尾不對（沒接完或多接了）：\(label)")
+    }
+
+    func testE_xtermSoftWrappedUrlTap_opensSafari() {
+        // 一整條沒換行的長字串，xterm 自己按欄寬折行（isWrapped）。網址在第 3–7 列（index 2 起），中段＝index 3
+        tapTerminalUrl(name: "E_xterm_softwrap", midKeyword: "client_id", tail: "create_api_key", fallbackRowIndex: 3)
+    }
+
+    func testF_xtermHardWrappedUrlTap_opensSafari() {
+        // 照 Claude Ink TUI 真實位元組重播：段與段之間 \r + ESC[1B（xterm 不標 isWrapped）——董手機上真正的情況。
+        // E 佔 index 2–6（5 列）+ 空行 index 7，F 從 index 8 起（第一段縮排 3 格），中段＝index 9
+        tapTerminalUrl(name: "F_xterm_hardwrap", midKeyword: "session_id", tail: "state=FFFEND", fallbackRowIndex: 9)
     }
 }

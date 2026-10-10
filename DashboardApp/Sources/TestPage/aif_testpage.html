@@ -5,8 +5,9 @@
       B 使用者點擊 → 同步 window.open（商城靜態付款連結的瀏覽器版）
       C 使用者點擊 → 等 1 秒再 window.open（舊寫法：先 await 抓網址再開 → 預期被擋，當對照組）
       D 使用者點擊 → 正式版 open_external.js 的 openExternal（殼內：合成 <a target=_blank> 再 .click()）
-      E 董實際的點法：xterm 終端機裡折成多行的 OAuth 網址，用 web-links addon 接回去後點（handler＝D）
-     xterm.js／css／addon 與 open_external.js 都是從正式版前端 node_modules／src 原樣複製的 app 內建資源（版本與 package.json 鎖的一致；第二輪從 CDN 載在殼裡卡住，改成不走網路）。 -->
+      E 董實際的點法：xterm 終端機裡折成多行的 OAuth 網址（連續字串、xterm 軟折行），terminal_links.js provider 接回去後點（handler＝D）
+      F 同上但模擬 Claude Ink TUI 的畫法：每 34 字硬切一個 row（xterm 不標 isWrapped）——這才是董手機上真正的情況
+     xterm.js／css 與 open_external.js／terminal_links.js 都是從正式版前端 node_modules／src 原樣複製的 app 內建資源（版本與 package.json 鎖的一致；第二輪從 CDN 載在殼裡卡住，改成不走網路）。 -->
 <link rel="stylesheet" href="xterm.css">
 <style>body{font-family:-apple-system;padding:24px 16px;font-size:18px;margin:0}a,button{display:block;width:100%;padding:14px;margin:10px 0;font-size:17px;border-radius:12px;border:0;background:#b5341a;color:#fff;text-align:center;text-decoration:none}
 #term{height:240px;background:#1c1917;border-radius:8px;padding:4px;margin-top:10px}</style>
@@ -26,22 +27,27 @@ function aifScriptFail(n){var st=document.getElementById('estat');if(st)st.textC
 <script src="open_external.js" onerror="aifScriptFail('open_external.js')"></script>
 <script>function aifOpen(u){ return window.aifOpenExternal(u); }</script>
 <script src="xterm.js" onerror="aifScriptFail('xterm.js')"></script>
-<script src="addon-web-links.js" onerror="aifScriptFail('addon-web-links.js')"></script>
+<script src="terminal_links.js" onerror="aifScriptFail('terminal_links.js')"></script>
 <script>
 (function(){
   var st=document.getElementById('estat');
   try{
     var T=(window.Terminal&&window.Terminal.Terminal)||window.Terminal;
-    var W=(window.WebLinksAddon&&window.WebLinksAddon.WebLinksAddon)||window.WebLinksAddon;
-    if(typeof T!=='function'||typeof W!=='function'){st.textContent='E：xterm/addon 沒載到 T='+typeof T+' W='+typeof W;return;}
-    var term=new T({cols:34,rows:8,fontSize:14,lineHeight:1.15,convertEol:true,
+    var R=window.aifRegisterTerminalLinks;
+    if(typeof T!=='function'||typeof R!=='function'){st.textContent='E：xterm/provider 沒載到 T='+typeof T+' R='+typeof R;return;}
+    var term=new T({cols:34,rows:14,fontSize:14,lineHeight:1.15,convertEol:true,
       fontFamily:'"Cascadia Mono",Consolas,"Courier New",monospace',
       theme:{background:'#1c1917',foreground:'#e7e5e4'}});
-    term.loadAddon(new W(function(ev,uri){try{ev&&ev.preventDefault&&ev.preventDefault()}catch(_){}
-      st.textContent='E：點到連結 '+uri; aifOpen(uri);}));
+    // 與正式版 App.jsx 同一支 provider；點到就把 uri 寫進狀態列再交給 openExternal
+    R(term, function(uri){ st.textContent='E：點到連結 '+uri; aifOpen(uri); });
     term.open(document.getElementById('term'));
-    // 34 欄：這串 OAuth 網址會折成 4 行，跟董手機上看到的一樣
-    term.write('> /login\r\n\r\nhttps://example.com/aif-E/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&scope=org%3Acreate_api_key\r\n');
+    // E：一整條沒換行的長字串，由 xterm 自己按 34 欄折行（isWrapped）
+    // F：照 Claude Ink TUI 真實位元組重播（後端 _extract_terminal_urls docstring）：第一段縮排 3 格，
+    //    每段畫完用 \r（回行首）+ \x1b[1B（往下一列）接下一段——不是換行字元，xterm 不會標 isWrapped
+    var E='https://example.com/aif-E/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&scope=org%3Acreate_api_key';
+    var F='https://example.com/aif-F/oauth/authorize?code=true&session_id=abcdef0123456789abcdef&response_type=code&state=FFFEND';
+    var Fseq='   '+F.slice(0,31); for(var i=31;i<F.length;i+=34) Fseq+='\r\x1b[1B'+F.slice(i,i+34);
+    term.write('> /login\r\n\r\n'+E+'\r\n\r\n'+Fseq+'\r\n\r\nPaste code here if prompted >\r\n');
     st.textContent='E：xterm 就緒';
   }catch(e){st.textContent='E：錯誤 '+e}
 })();
