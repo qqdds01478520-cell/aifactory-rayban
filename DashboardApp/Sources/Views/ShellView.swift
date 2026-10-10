@@ -100,63 +100,19 @@ struct WebShell: UIViewRepresentable {
         // 測試模式（XCUITest／模擬器，啟動參數 -aifTestPage）：不連伺服器，載內建測試頁，
         // 專門驗「網頁裡的連結點下去，殼會不會真的把網址交給 Safari」。正式啟動不會走到。
         if ProcessInfo.processInfo.arguments.contains("-aifTestPage") {
-            w.loadHTMLString(Self.testPageHTML, baseURL: URL(string: "https://aif-test.local/"))
+            // 測試頁＋xterm 資源都內建在 bundle（Sources/TestPage/），不走網路
+            if let page = Bundle.main.url(forResource: "aif_testpage", withExtension: "html") {
+                w.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
+            } else {
+                w.loadHTMLString("<h2>aif_testpage.html 不在 bundle 裡</h2>", baseURL: nil)
+            }
             return w
         }
         w.load(URLRequest(url: state.api.url("/"), cachePolicy: .reloadRevalidatingCacheData, timeoutInterval: 30))
         return w
     }
 
-    // 五種「從網頁開外部網址」的寫法，對應 8896 前端實際用到的路徑：
-    //  A 真的 <a target=_blank>（終端機歷史視圖的連結、「開啟登入網址」鈕的殼內版本）
-    //  B 使用者點擊 → 同步 window.open（商城靜態付款連結的瀏覽器版）
-    //  C 使用者點擊 → 等 1 秒再 window.open（舊寫法：先 await 抓網址再開 → 預期會被擋，當對照組）
-    //  D 使用者點擊 → App.jsx openExternal 殼內版：合成 <a target=_blank> 再 .click()
-    //  E 董實際的點法：xterm 終端機裡那串折成多行的 OAuth 網址，用 web-links addon 接回去後點（handler＝D）
-    static let testPageHTML = """
-    <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css">
-    <style>body{font-family:-apple-system;padding:24px 16px;font-size:18px;margin:0}a,button{display:block;width:100%;padding:14px;margin:10px 0;font-size:17px;border-radius:12px;border:0;background:#b5341a;color:#fff;text-align:center;text-decoration:none}
-    #term{height:240px;background:#1c1917;border-radius:8px;padding:4px;margin-top:10px}</style>
-    </head><body>
-    <h2 style="margin:0 0 8px">開網址測試</h2>
-    <a id="a" href="https://example.com/aif-A" target="_blank" rel="noopener">A 真連結</a>
-    <button id="b" onclick="window.open('https://example.com/aif-B','_blank','noopener')">B 同步開</button>
-    <button id="c" onclick="setTimeout(function(){window.open('https://example.com/aif-C','_blank','noopener')},1000)">C 延遲開</button>
-    <button id="d" onclick="aifOpen('https://example.com/aif-D')">D 合成連結</button>
-    <div id="term"></div>
-    <div id="estat" style="font-size:13px;color:#555;margin-top:6px">E：xterm 載入中…</div>
-    <script>
-    // 與 App.jsx openExternal 殼內分支一字不差（合成 anchor → click）
-    function aifOpen(u){
-      try{var a=document.createElement('a');a.href=u;a.target='_blank';a.rel='noopener';
-        document.body.appendChild(a);a.click();setTimeout(function(){try{a.remove()}catch(_){}},0);return true;}catch(_){}
-      try{return !!window.open(u,'_blank','noopener')}catch(_){return false}
-    }
-    </script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.12.0/lib/addon-web-links.js"></script>
-    <script>
-    (function(){
-      var st=document.getElementById('estat');
-      try{
-        var T=(window.Terminal&&window.Terminal.Terminal)||window.Terminal;
-        var W=(window.WebLinksAddon&&window.WebLinksAddon.WebLinksAddon)||window.WebLinksAddon;
-        if(!T||!W){st.textContent='E：xterm/addon 沒載到';return;}
-        var term=new T({cols:34,rows:8,fontSize:14,lineHeight:1.15,convertEol:true,
-          fontFamily:'"Cascadia Mono",Consolas,"Courier New",monospace',
-          theme:{background:'#1c1917',foreground:'#e7e5e4'}});
-        term.loadAddon(new W(function(ev,uri){try{ev&&ev.preventDefault&&ev.preventDefault()}catch(_){}
-          st.textContent='E：點到連結 '+uri; aifOpen(uri);}));
-        term.open(document.getElementById('term'));
-        // 34 欄：這串 OAuth 網址會折成 4 行，跟董手機上看到的一樣
-        term.write('> /login\r\n\r\nhttps://example.com/aif-E/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&scope=org%3Acreate_api_key\r\n');
-        st.textContent='E：xterm 就緒';
-      }catch(e){st.textContent='E：錯誤 '+e}
-    })();
-    </script>
-    </body></html>
-    """
+    // 測試頁本體見 Sources/TestPage/aif_testpage.html（A–E 五案說明在檔頭）
     func updateUIView(_ uiView: WKWebView, context: Context) { context.coordinator.parent = self }
 
     // 注入網頁：①把原生 Keychain 的 token 種進 localStorage（v2 原生登入過的人不用再登）②localStorage 的 token／帳號變了就回報原生
