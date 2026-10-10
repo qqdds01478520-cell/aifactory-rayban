@@ -47,8 +47,12 @@ function aifScriptFail(n){var st=document.getElementById('estat');if(st)st.textC
     var E='https://example.com/aif-E/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&scope=org%3Acreate_api_key';
     var F='https://example.com/aif-F/oauth/authorize?code=true&session_id=abcdef0123456789abcdef&response_type=code&state=FFFEND';
     var Fseq='   '+F.slice(0,31); for(var i=31;i<F.length;i+=34) Fseq+='\r\x1b[1B'+F.slice(i,i+34);
-    term.write('> /login\r\n\r\n'+E+'\r\n\r\n'+Fseq+'\r\n\r\nPaste code here if prompted >\r\n');
-    st.textContent='E：xterm 就緒';
+    // 第五輪（COO ③）：先寫 30 行填充把網址捲上去（viewportY>0），touchend 的座標→格子必須算進 viewportY 才點得到。
+    // 最後 14 列畫面跟第四輪一模一樣（E 在第 1–5 列、F 在第 7–10 列），XCUITest 的座標不用改。
+    var pre=''; for(var k=1;k<=30;k++) pre+='filler line '+k+'\r\n';
+    term.write(pre+'> /login\r\n\r\n'+E+'\r\n\r\n'+Fseq+'\r\n\r\nPaste code here if prompted >\r\n', function(){
+      st.textContent='E：xterm 就緒 viewportY='+term.buffer.active.viewportY;
+    });
   }catch(e){st.textContent='E：錯誤 '+e}
 })();
 </script>
