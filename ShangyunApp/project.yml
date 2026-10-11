@@ -1,0 +1,41 @@
+# XcodeGen 規格 — 商雲端 iOS app v1.0（董事長 2026-10-12 TG11415「我要ios的啊」）
+# 同控制台 App 做法（董 9/29 定案「一律網頁版＋滿版」）：WKWebView 滿版載商雲端網頁原碼，原生殼只做觸覺／左緣右滑返回／連不上重試
+name: Shangyun
+options:
+  bundleIdPrefix: com.aifactory
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  Shangyun:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: 商雲端
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0"
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        ITSAppUsesNonExemptEncryption: false
+        UIUserInterfaceStyle: Dark
+        UIViewControllerBasedStatusBarAppearance: false
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aifactory.shangyun
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.9"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+schemes:
+  Shangyun:
+    build:
+      targets:
+        Shangyun: all
+    run:
+      config: Debug
+    archive:
+      config: Release
